@@ -19,6 +19,7 @@ let lastPositions = {};
 let lastState = null;
 let lastHistory = [];
 let dashboardLoadInFlight = false;
+let renderFrame = null;
 
 function signalForSymbol(symbol, signals, positions){
   if(!symbol) return null;
@@ -62,19 +63,28 @@ function eventDetail(row){
 async function loadDashboard(){
   if(dashboardLoadInFlight) return;
   dashboardLoadInFlight = true;
-  document.getElementById("clock").textContent = new Date().toLocaleString();
+  const startedAt = Date.now();
   try{
     const snapshot = await fetch("/api/dashboard").then(r=>r.json());
     lastState = snapshot.state;
     lastHistory = snapshot.history || [];
     lastSignals = snapshot.signals || [];
-    render();
+    scheduleRender(snapshot.updated_at);
   }finally{
     dashboardLoadInFlight = false;
+    setTimeout(loadDashboard, Math.max(0, 1000 - (Date.now() - startedAt)));
   }
 }
 
-function render(){
+function scheduleRender(updatedAt){
+  if(renderFrame) cancelAnimationFrame(renderFrame);
+  renderFrame = requestAnimationFrame(() => {
+    renderFrame = null;
+    render(updatedAt);
+  });
+}
+
+function render(updatedAt){
   const state = lastState;
   if(!state) return;
   lastPositions = state.positions || {};
@@ -82,28 +92,35 @@ function render(){
   const history = lastHistory;
   const watch = Object.values(state.watchlist || {});
   const positions = Object.entries(state.positions || {});
-  document.getElementById("watchCount").textContent = watch.length;
-  document.getElementById("openCount").textContent = signals.filter(s=>s.action==="OPEN").length;
-  document.getElementById("posCount").textContent = `${positions.length} / ${state.account?.slots ?? 10}`;
-  document.getElementById("equity").textContent = `${fmt(state.account?.equity ?? 0)} USDT`;
   const pnl = state.account?.pnl ?? 0;
-  document.getElementById("pnl").textContent = `${pnl>=0?"+":""}${fmt(pnl)} USDT`;
-  document.getElementById("pnl").className = pnl >= 0 ? "pos" : "neg";
-  document.getElementById("signals").innerHTML = signals.map(s=>{
+  const clockText = updatedAt ? new Date(updatedAt * 1000).toLocaleString() : new Date().toLocaleString();
+  const statsHtml = `
+    <div><small>Watchlist</small><strong id="watchCount">${watch.length}</strong></div>
+    <div><small>Open Signals</small><strong id="openCount">${signals.filter(s=>s.action==="OPEN").length}</strong></div>
+    <div><small>Positions</small><strong id="posCount">${positions.length} / ${state.account?.slots ?? 10}</strong></div>
+    <div><small>Equity</small><strong id="equity">${fmt(state.account?.equity ?? 0)} USDT</strong></div>
+    <div><small>Net PnL</small><strong id="pnl" class="${pnl >= 0 ? "pos" : "neg"}">${pnl>=0?"+":""}${fmt(pnl)} USDT</strong></div>
+  `;
+  const signalsHtml = signals.map(s=>{
     const meta = state.watchlist[s.symbol] || {};
     const ch = meta.change24h ?? 0;
     return `<tr data-symbol="${s.symbol}" class="${s.symbol===selectedSymbol?"selected":""}"><td>${s.symbol}</td><td class="${ch>=0?"pos":"neg"}">${fmt(ch)}%</td><td>${meta.score??""}</td><td>${fmt(s.support)}</td><td>${fmt(s.resistance)}</td><td>${fmt(s.qvol)}</td><td>${fmt(s.volume_ratio)}</td><td><span class="${cls(s.action)}">${s.action}</span></td></tr>`;
   }).join("");
-  document.getElementById("positions").innerHTML = positions.map(([sym,p])=>{
+  const positionsHtml = positions.map(([sym,p])=>{
     const stale = p.mark == null || p.market_status !== "TRADING";
     const mark = stale ? `<span class="warn">${p.market_status || "NO MARK"}</span>` : price(p.mark);
     return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${price(p.entry)}</td><td>${mark}</td><td>${qty(p.qty)}</td><td>${compact(p.leverage, 2)}x</td><td>${usdt(p.margin)} USDT</td><td class="neg">${price(p.stop)}</td><td class="${(p.gross_pnl??0)>=0?"pos":"neg"}">${money(p.gross_pnl)}</td><td>${usdt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
   }).join("");
-  document.getElementById("history").innerHTML = history.slice(0, 50).map(row=>{
+  const historyHtml = history.slice(0, 50).map(row=>{
     const action = row.action === "CLOSE" ? "CLOSE" : "BUY";
     const pnl = Number(row.gross_pnl);
     return `<tr><td>${eventTime(row)}</td><td>${row.symbol || ""}</td><td><span class="${cls(action === "BUY" ? "OPEN" : "EXIT")}">${action}</span></td><td>${price(row.price)}</td><td>${qty(row.qty)}</td><td>${usdt(row.notional)} USDT</td><td>${usdt(eventFee(row))} USDT</td><td class="${Number.isFinite(pnl) ? (pnl >= 0 ? "pos" : "neg") : ""}">${eventDetail(row)}</td></tr>`;
   }).join("");
+  document.getElementById("clock").textContent = clockText;
+  document.querySelector(".stats").innerHTML = statsHtml;
+  document.getElementById("signals").innerHTML = signalsHtml;
+  document.getElementById("positions").innerHTML = positionsHtml;
+  document.getElementById("history").innerHTML = historyHtml;
   const selected = signalForSymbol(selectedSymbol, signals, state.positions || {}) || signals[0] || (positions[0] ? {symbol: positions[0][0], action: "POSITION"} : null);
   const nextSymbol = selected?.symbol || null;
   const shouldDrawChart = selected && (chartSymbol !== nextSymbol || Date.now() - lastChartAt > 60000);
@@ -180,4 +197,3 @@ function renderCandles(box, data, signal){
 }
 
 loadDashboard();
-setInterval(loadDashboard, 1000);
