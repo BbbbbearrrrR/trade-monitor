@@ -121,7 +121,7 @@ function render(updatedAt){
     const stale = p.mark == null || p.market_status !== "TRADING";
     const mark = stale ? `<span class="warn">${p.market_status || "NO MARK"}</span>` : price(p.mark);
     const tp = [p.take_profit_1, p.take_profit_2].filter(v=>Number.isFinite(Number(v))).map(price).join(" / ");
-    return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${price(p.entry)}</td><td>${mark}</td><td>${qty(p.qty)}</td><td>${compact(p.leverage, 2)}x</td><td>${usdt(p.margin)} USDT</td><td class="neg">${price(p.stop)}</td><td class="pos">${tp}</td><td>${usdt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
+    return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${qty(p.qty)}</td><td>${compact(p.leverage, 2)}x</td><td>${usdt(p.margin)} USDT</td><td>${price(p.entry)}</td><td>${mark}</td><td class="neg">${price(p.stop)}</td><td class="pos">${tp}</td><td>${usdt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
   }).join("");
   const historyHtml = history.slice(0, 50).map(row=>{
     const action = row.action === "CLOSE" ? "CLOSE" : "BUY";
