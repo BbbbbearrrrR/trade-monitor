@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+API = "https://api.binance.com"
+WATCHLIST = Path("watchlist.json")
+POSITIONS = Path("positions.json")
+
+
+def get_json(path, query=None):
+    url = API + path
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    req = urllib.request.Request(url, headers={"User-Agent": "trade-monitor-binance-watcher/0.1"})
+    last = None
+    for _ in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                return json.loads(r.read().decode("utf-8"))
+        except (OSError, urllib.error.URLError) as e:
+            last = e
+            time.sleep(1)
+    raise last
+
+
+def read_json(path, default):
+    return json.loads(path.read_text("utf-8")) if path.exists() else default
+
+
+def write_json(path, value):
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
+
+
+def bars(symbol, interval, limit):
+    rows = get_json("/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit})
+    return [{"t": int(r[0] / 1000), "o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4]), "vol": float(r[5]), "qvol": float(r[7]), "trades": int(r[8])} for r in rows]
+
+
+def mark_price(symbol):
+    return float(get_json("/api/v3/ticker/price", {"symbol": symbol})["price"])
+
+
+def exit_order(symbol, position, signal):
+    price = signal.get("price") or mark_price(symbol)
+    qty = float(position.get("qty") or 0)
+    entry = float(position.get("entry") or 0)
+    notional = round(price * qty, 8)
+    return {
+        "action": "CLOSE",
+        "symbol": symbol,
+        "price": price,
+        "qty": qty,
+        "notional": notional,
+        "entry": entry,
+        "gross_pnl": round((price - entry) * qty, 8),
+        "reason": signal.get("reasons", []),
+        "closed_at": int(time.time()),
+    }
+
+
+def execute_exit(signal, watch=None, positions=None, persist=True):
+    symbol = signal.get("symbol")
+    if not symbol:
+        return None
+
+    own_watch = watch is None
+    own_positions = positions is None
+    watch = read_json(WATCHLIST, {}) if own_watch else watch
+    positions = read_json(POSITIONS, {}) if own_positions else positions
+
+    watch.pop(symbol, None)
+    position = positions.pop(symbol, None)
+    order = exit_order(symbol, position, signal) if position else None
+
+    if persist:
+        write_json(WATCHLIST, watch)
+        write_json(POSITIONS, positions)
+    if order:
+        print(json.dumps(order, ensure_ascii=False))
+    return order
+
+
+def structure(rows, lookback=15, pivot_width=2):
+    base = rows[-lookback:]
+    if not base:
+        return {"support": None, "resistance": None}
+
+    swing_highs = []
+    swing_lows = []
+    for i in range(pivot_width, len(base) - pivot_width):
+        left = base[i - pivot_width:i]
+        right = base[i + 1:i + 1 + pivot_width]
+        high = base[i]["h"]
+        low = base[i]["l"]
+        if all(high > r["h"] for r in left + right):
+            swing_highs.append(high)
+        if all(low < r["l"] for r in left + right):
+            swing_lows.append(low)
+
+    confirmed = base[:-pivot_width] if len(base) > pivot_width else base
+    support = swing_lows[-1] if swing_lows else min(r["l"] for r in confirmed)
+    resistance = swing_highs[-1] if swing_highs else max(r["h"] for r in confirmed)
+    return {
+        "support": support,
+        "resistance": resistance,
+    }
+
+
+def is_setup(row):
+    value = str(row.get("action") or row.get("status") or row.get("state") or "").lower()
+    if value == "setup" or row.get("setup") is True:
+        return True
+    return "setup" in [str(r).lower() for r in row.get("reasons", [])]
+
+
+def interval_minutes(interval):
+    unit = interval[-1]
+    value = int(interval[:-1])
+    if unit == "m":
+        return value
+    if unit == "h":
+        return value * 60
+    if unit == "d":
+        return value * 1440
+    raise ValueError(f"unsupported interval: {interval}")
+
+
+def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_kline):
+    kline_minutes = interval_minutes(volume_kline)
+    spike_bars = max(1, int(round(spike_minutes / kline_minutes)))
+    prev_bars = 20
+    if len(rows) < prev_bars + spike_bars:
+        return "WATCH", ["warming_up"], None, None
+
+    last = rows[-1]
+    recent = rows[-spike_bars:]
+    prev = rows[-(prev_bars + spike_bars):-spike_bars]
+    recent_qvol = sum(r["qvol"] for r in recent)
+    avg_qvol = sum(r["qvol"] for r in prev) / len(prev)
+    expected_qvol = avg_qvol * spike_bars
+    min_window_qvol = min_qvol * ((spike_bars * kline_minutes) / 15)
+    threshold = max(min_window_qvol, expected_qvol * vol_mult)
+    volume_ratio = recent_qvol / expected_qvol if expected_qvol else 0
+
+    resistance = levels.get("resistance")
+    broke_resistance = bool(resistance and last["c"] > resistance)
+
+    if levels.get("support") and last["c"] < levels["support"]:
+        return "EXIT", ["structure_break"], volume_ratio, recent_qvol
+    if broke_resistance and recent_qvol >= threshold:
+        return "OPEN", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike"], volume_ratio, recent_qvol
+    if broke_resistance:
+        return "SETUP", ["setup", "resistance_break", "waiting_volume"], volume_ratio, recent_qvol
+    if recent_qvol >= threshold:
+        return "SETUP", ["setup", f"{spike_bars * kline_minutes}m_volume_spike", "waiting_breakout"], volume_ratio, recent_qvol
+    return "SETUP", ["setup", "waiting_breakout", "waiting_volume"], volume_ratio, recent_qvol
+
+
+def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True):
+    if setup_only and not is_setup(row):
+        return None
+    level_rows = bars(symbol, level_kline, 16)
+    spike_bars = max(1, int(round(spike_minutes / interval_minutes(volume_kline))))
+    volume_rows = bars(symbol, volume_kline, 20 + spike_bars)
+    levels = structure(level_rows[:-1])
+    action, reasons, volume_ratio, recent_qvol = volume_spike_signal(levels, volume_rows, min_qvol, vol_mult, spike_minutes, volume_kline)
+    last = volume_rows[-1]
+    breakout_pct = (last["c"] / levels["resistance"] - 1) * 100 if levels["resistance"] else 0
+    return {
+        "action": action,
+        "symbol": symbol,
+        "price": last["c"],
+        "support": levels["support"],
+        "resistance": levels["resistance"],
+        "breakout_pct": round(breakout_pct, 2),
+        "qvol": round(recent_qvol) if recent_qvol is not None else None,
+        "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
+        "volume_window_minutes": spike_bars * interval_minutes(volume_kline),
+        "reasons": reasons,
+        "source_score": row.get("score"),
+    }
+
+
+def current_signals(args):
+    watch = read_json(WATCHLIST, {})
+    rows_to_watch = sorted(watch.items(), key=lambda kv: (kv[1].get("score", 0), kv[1].get("change24h", 0)), reverse=True)
+    out = []
+    for symbol, row in rows_to_watch[:args.max_symbols]:
+        try:
+            signal_row = signal_for_row(
+                symbol,
+                row,
+                args.level_kline,
+                args.volume_kline,
+                args.min_qvol,
+                args.vol_mult,
+                args.spike_minutes,
+                args.setup_only,
+            )
+        except (OSError, urllib.error.URLError) as e:
+            print(f"skip {symbol}: {e}", file=sys.stderr)
+            continue
+        if signal_row:
+            out.append(signal_row)
+        time.sleep(0.2)
+    return out
+
+
+def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike_minutes, setup_only=True):
+    watch = read_json(WATCHLIST, {})
+    positions = read_json(POSITIONS, {})
+    args = type("Args", (), {
+        "level_kline": level_kline,
+        "volume_kline": volume_kline,
+        "min_qvol": min_qvol,
+        "vol_mult": vol_mult,
+        "max_symbols": max_symbols,
+        "spike_minutes": spike_minutes,
+        "setup_only": setup_only,
+    })()
+    changed = False
+    for out in current_signals(args):
+        print(json.dumps(out, ensure_ascii=False))
+        if out["action"] == "EXIT":
+            execute_exit(out, watch, positions, persist=False)
+            changed = True
+    if changed:
+        write_json(WATCHLIST, watch)
+        write_json(POSITIONS, positions)
+
+
+def demo():
+    rows15 = [{"t": i, "o": 1.35, "h": 1.38, "l": 1.3, "c": 1.35, "vol": 1, "qvol": 1000, "trades": 10} for i in range(15)]
+    rows15[4]["h"] = 1.42
+    rows15[8]["l"] = 1.28
+    current = {"t": 16, "o": 1.36, "h": 2.0, "l": 0.5, "c": 1.38, "vol": 1, "qvol": 3500, "trades": 50}
+    assert structure(rows15 + [current])["support"] == 1.28
+    assert structure(rows15)["support"] == 1.28
+    assert structure(rows15)["resistance"] == 1.42
+
+    rows1m = [{"t": i, "o": 1.36, "h": 1.38, "l": 1.35, "c": 1.36, "vol": 1, "qvol": 1000, "trades": 10} for i in range(20)]
+    rows1m += [{"t": 21 + i, "o": 1.36, "h": 1.45, "l": 1.35, "c": 1.43, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
+    action, reasons, ratio, recent_qvol = volume_spike_signal(structure(rows15), rows1m, 1000, 3, 3, "1m")
+    assert action == "OPEN" and "resistance_break" in reasons and "3m_volume_spike" in reasons and ratio == 3.5 and recent_qvol == 10500
+    no_break_rows = rows1m[:-3] + [{"t": 21 + i, "o": 1.36, "h": 1.39, "l": 1.35, "c": 1.38, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
+    action, reasons, _, _ = volume_spike_signal(structure(rows15), no_break_rows, 1000, 3, 3, "1m")
+    assert action == "SETUP" and "waiting_breakout" in reasons
+    assert is_setup({"action": "SETUP"})
+    assert is_setup({"setup": True})
+    assert not is_setup({"action": "HOLD"})
+    watch = {"AAA": {"symbol": "AAA"}}
+    positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20}}
+    order = execute_exit({"action": "EXIT", "symbol": "AAA", "price": 1.8, "reasons": ["structure_break"]}, watch, positions, persist=False)
+    assert order["action"] == "CLOSE" and order["gross_pnl"] == -2
+    assert "AAA" not in watch and "AAA" not in positions
+    print("demo ok")
+
+def main():
+    p = argparse.ArgumentParser(description="Monitor Binance watchlist.json for K-line and volume signals.")
+    p.add_argument("--level-kline", default=os.getenv("LEVEL_KLINE", "15m"))
+    p.add_argument("--volume-kline", default=os.getenv("VOLUME_KLINE", os.getenv("SIGNAL_KLINE", "1m")))
+    p.add_argument("--min-qvol", type=float, default=float(os.getenv("MIN_QVOL", "50000")))
+    p.add_argument("--vol-mult", type=float, default=float(os.getenv("VOL_MULT", "2")))
+    p.add_argument("--spike-minutes", type=int, default=int(os.getenv("SPIKE_MINUTES", "3")))
+    p.add_argument("--max-symbols", type=int, default=int(os.getenv("MAX_SYMBOLS", "50")))
+    p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
+    p.add_argument("--interval", type=int, default=int(os.getenv("WATCH_SECONDS", "15")))
+    p.add_argument("--once", action="store_true")
+    p.add_argument("--demo", action="store_true")
+    args = p.parse_args()
+    if args.demo:
+        demo()
+        return
+    while True:
+        watch_once(args.level_kline, args.volume_kline, args.min_qvol, args.vol_mult, args.max_symbols, args.spike_minutes, args.setup_only)
+        if args.once:
+            return
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    main()

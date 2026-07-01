@@ -1,0 +1,44 @@
+services:
+  dashboard:
+    build: .
+    command: python dashboard.py
+    environment:
+      EQUITY: ${EQUITY:-1000}
+      FEE_BPS: ${FEE_BPS:-10}
+    ports:
+      - "5050:5050"
+    volumes:
+      - .:/app
+  scanner:
+    build: .
+    command: python scanner.py
+    volumes:
+      - .:/app
+  strategy:
+    build: .
+    command: python strategy.py --watch --equity ${EQUITY:-1000} --slots 8 --fee-bps ${FEE_BPS:-10}
+    environment:
+      LEVEL_KLINE: ${LEVEL_KLINE:-15m}
+      VOLUME_KLINE: ${VOLUME_KLINE:-1m}
+      MIN_QVOL: ${MIN_QVOL:-50000}
+      VOL_MULT: ${VOL_MULT:-2}
+      SPIKE_MINUTES: ${SPIKE_MINUTES:-3}
+      MAX_SYMBOLS: ${MAX_SYMBOLS:-50}
+      SETUP_ONLY: ${SETUP_ONLY:-1}
+      STRATEGY_SECONDS: ${STRATEGY_SECONDS:-5}
+    volumes:
+      - .:/app
+  watcher:
+    build: .
+    command: python watcher.py
+    environment:
+      LEVEL_KLINE: ${LEVEL_KLINE:-15m}
+      VOLUME_KLINE: ${VOLUME_KLINE:-1m}
+      SETUP_ONLY: ${SETUP_ONLY:-1}
+      MIN_QVOL: ${MIN_QVOL:-50000}
+      VOL_MULT: ${VOL_MULT:-2}
+      SPIKE_MINUTES: ${SPIKE_MINUTES:-3}
+      MAX_SYMBOLS: ${MAX_SYMBOLS:-50}
+      WATCH_SECONDS: ${WATCH_SECONDS:-15}
+    volumes:
+      - .:/app

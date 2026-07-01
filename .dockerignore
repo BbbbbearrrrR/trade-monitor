@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+
+*.log
+*.pid
+
+watchlist.json
+positions.json
+pending.json
+
+charts/
+
+.git/
+.env
+.DS_Store

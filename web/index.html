@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Trade Monitor</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <aside>
+    <div class="brand">TRADE<br><span>MONITOR</span></div>
+    <nav>
+      <b>Scanner</b><span>10%-30% gainers</span>
+      <b>Watcher</b><span>Setup short-window volume spike</span>
+      <b>Strategy</b><span>8 fixed slots</span>
+    </nav>
+    <div class="sidebox">
+      <small>Mode</small>
+      <strong>Paper Orders</strong>
+    </div>
+  </aside>
+
+  <main>
+    <header>
+      <h1>Binance USDT Signal Desk</h1>
+      <div id="clock"></div>
+    </header>
+
+    <section class="stats">
+      <div><small>Watchlist</small><strong id="watchCount">0</strong></div>
+      <div><small>Open Signals</small><strong id="openCount">0</strong></div>
+      <div><small>Positions</small><strong id="posCount">0 / 8</strong></div>
+      <div><small>Equity</small><strong id="equity">0</strong></div>
+      <div><small>Net PnL</small><strong id="pnl">0</strong></div>
+    </section>
+
+    <section class="grid">
+      <div class="panel watch">
+        <h2>Watchlist Signals</h2>
+        <table>
+          <thead><tr><th>Symbol</th><th>24h</th><th>Score</th><th>Support</th><th>Resistance</th><th>Spike QVol</th><th>Vol x</th><th>Action</th></tr></thead>
+          <tbody id="signals"></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h2 id="chartTitle">Levels</h2>
+        <div id="tvChart"></div>
+      </div>
+      <div class="panel">
+        <h2>Open Positions</h2>
+        <table><thead><tr><th>Symbol</th><th>Entry</th><th>Mark</th><th>Qty</th><th>Stop</th><th>Gross</th><th>Fee</th><th>Net PnL</th></tr></thead><tbody id="positions"></tbody></table>
+      </div>
+    </section>
+  </main>
+  <script src="/app.js?v=chart-5m"></script>
+</body>
+</html>
