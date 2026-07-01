@@ -46,7 +46,7 @@ Each paper position targets:
 notional = EQUITY / slots
 ```
 
-With the defaults, that is `1000 / 8 = 125 USDT` notional per position.
+With the defaults, that is `1000 / 10 = 100 USDT` notional per position.
 
 The strategy tracks local margin usage as:
 
@@ -103,6 +103,7 @@ Common variables:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `EQUITY` | `1000` | Paper account equity used for sizing |
+| `SLOTS` | `10` | Maximum number of paper positions and sizing divisor |
 | `FEE_BPS` | `10` | Fee estimate in basis points |
 | `LEVEL_KLINE` | `15m` | Strategy support/resistance candle interval |
 | `VOLUME_KLINE` | `1m` | Volume spike candle interval |

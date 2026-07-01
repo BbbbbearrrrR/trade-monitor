@@ -144,30 +144,30 @@ def demo():
     result = orders(
         candidates,
         1000,
-        8,
+        10,
         0.01,
     )
     assert len(result) == 2
-    assert result[0]["notional"] == 125
-    assert result[0]["margin"] == 125
-    assert result[0]["qty"] == 62.5
-    assert result[0]["entry_fee"] == 0.125
+    assert result[0]["notional"] == 100
+    assert result[0]["margin"] == 100
+    assert result[0]["qty"] == 50
+    assert result[0]["entry_fee"] == 0.1
     assert result[0]["fee_bps"] == 10
     assert result[0]["leverage"] == 1
     assert result[0]["stop"] == 1.782
     assert result[0]["take_profit_1"] == 2.3
     assert result[0]["take_profit_2"] == 2.6
     assert orders(candidates, 1000, 1, 0.01, {"AAA": {}}) == []
-    nearly_full = {str(i): {"notional": 125, "margin": 125, "entry_fee": 0.125, "leverage": 1} for i in range(7)}
-    result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1000, 8, 0.01, nearly_full)
-    assert result[0]["leverage"] == 2 and result[0]["margin"] == 62.5
+    nearly_full = {str(i): {"notional": 100, "margin": 100, "entry_fee": 0.1, "leverage": 1} for i in range(9)}
+    result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1000, 10, 0.01, nearly_full)
+    assert result[0]["leverage"] == 2 and result[0]["margin"] == 50
     print("demo ok")
 
 
 def main():
     p = argparse.ArgumentParser(description="Allocate one fixed equity slot to each OPEN signal.")
     p.add_argument("--equity", type=float, required=False, default=1000)
-    p.add_argument("--slots", type=int, default=8)
+    p.add_argument("--slots", type=int, default=10)
     p.add_argument("--stop-buffer", type=float, default=0.01)
     p.add_argument("--fee-bps", type=float, default=float(os.getenv("FEE_BPS", "10")))
     p.add_argument("--leverage", type=float, default=float(os.getenv("LEVERAGE", "1")))

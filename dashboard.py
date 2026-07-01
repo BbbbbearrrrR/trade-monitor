@@ -152,11 +152,13 @@ class Handler(SimpleHTTPRequestHandler):
             pnl = realized_pnl + unrealized_pnl
             fees = realized_fees + unrealized_fees
             equity = float(os.getenv("EQUITY", "1000"))
+            slots = int(os.getenv("SLOTS", "10"))
             return self.json({
                 "watchlist": read_json("watchlist.json", {}),
                 "positions": positions,
                 "account": {
                     "initial": equity,
+                    "slots": slots,
                     "pnl": pnl,
                     "realized_pnl": realized_pnl,
                     "unrealized_pnl": unrealized_pnl,

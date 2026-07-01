@@ -69,7 +69,7 @@ async function load(){
   const positions = Object.entries(state.positions || {});
   document.getElementById("watchCount").textContent = watch.length;
   document.getElementById("openCount").textContent = signals.filter(s=>s.action==="OPEN").length;
-  document.getElementById("posCount").textContent = `${positions.length} / 8`;
+  document.getElementById("posCount").textContent = `${positions.length} / ${state.account?.slots ?? 10}`;
   document.getElementById("equity").textContent = `${fmt(state.account?.equity ?? 0)} USDT`;
   const pnl = state.account?.pnl ?? 0;
   document.getElementById("pnl").textContent = `${pnl>=0?"+":""}${fmt(pnl)} USDT`;
