@@ -166,6 +166,13 @@ def apply_exit_signals(signals):
     return visible
 
 
+def signal_snapshot():
+    snapshot = watcher.read_json(watcher.SIGNALS, None)
+    if isinstance(snapshot, dict) and isinstance(snapshot.get("signals"), list):
+        return snapshot["signals"]
+    return None
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "web"), **kwargs)
@@ -209,17 +216,20 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/history":
             return self.json(trade_history(read_json("positions.json", {})))
         if path == "/api/signals":
-            args = type("Args", (), {
-                "max_symbols": 50,
-                "level_kline": os.getenv("LEVEL_KLINE", "15m"),
-                "volume_kline": os.getenv("VOLUME_KLINE", "1m"),
-                "min_qvol": float(os.getenv("MIN_QVOL", "50000")),
-                "vol_mult": float(os.getenv("VOL_MULT", "2")),
-                "spike_minutes": int(os.getenv("SPIKE_MINUTES", "3")),
-                "breakout_buffer_pct": float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")),
-                "setup_only": os.getenv("SETUP_ONLY", "1") != "0",
-            })()
-            return self.json(apply_exit_signals(strategy.current_signals(args)))
+            signals = signal_snapshot()
+            if signals is None:
+                args = type("Args", (), {
+                    "max_symbols": 50,
+                    "level_kline": os.getenv("LEVEL_KLINE", "15m"),
+                    "volume_kline": os.getenv("VOLUME_KLINE", "1m"),
+                    "min_qvol": float(os.getenv("MIN_QVOL", "50000")),
+                    "vol_mult": float(os.getenv("VOL_MULT", "2")),
+                    "spike_minutes": int(os.getenv("SPIKE_MINUTES", "3")),
+                    "breakout_buffer_pct": float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")),
+                    "setup_only": os.getenv("SETUP_ONLY", "1") != "0",
+                })()
+                signals = strategy.current_signals(args)
+            return self.json(apply_exit_signals(signals))
         if path == "/api/klines":
             query = dict(__import__("urllib.parse").parse.parse_qsl(parsed.query))
             symbol = (query.get("symbol") or "BTCUSDT").upper()
