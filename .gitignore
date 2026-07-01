@@ -7,6 +7,7 @@ __pycache__/
 watchlist.json
 positions.json
 pending.json
+trade_history.json
 
 charts/
 

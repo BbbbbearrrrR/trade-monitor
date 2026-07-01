@@ -13,6 +13,7 @@ from pathlib import Path
 API = "https://fapi.binance.com"
 WATCHLIST = Path("watchlist.json")
 POSITIONS = Path("positions.json")
+HISTORY = Path("trade_history.json")
 
 
 def get_json(path, query=None):
@@ -37,6 +38,14 @@ def read_json(path, default):
 
 def write_json(path, value):
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
+
+
+def append_history(event, path=HISTORY, limit=1000):
+    history = read_json(path, [])
+    history.append(event)
+    if len(history) > limit:
+        history = history[-limit:]
+    write_json(path, history)
 
 
 def bars(symbol, interval, limit):
@@ -83,7 +92,7 @@ def exit_order(symbol, position, signal):
     }
 
 
-def execute_exit(signal, watch=None, positions=None, persist=True):
+def execute_exit(signal, watch=None, positions=None, persist=True, record_history=True):
     symbol = signal.get("symbol")
     if not symbol:
         return None
@@ -100,6 +109,8 @@ def execute_exit(signal, watch=None, positions=None, persist=True):
     if persist:
         write_json(WATCHLIST, watch)
         write_json(POSITIONS, positions)
+    if order and record_history:
+        append_history(order)
     if order:
         print(json.dumps(order, ensure_ascii=False))
     return order
@@ -275,7 +286,7 @@ def demo():
     assert not is_setup({"action": "HOLD"})
     watch = {"AAA": {"symbol": "AAA"}}
     positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20}}
-    order = execute_exit({"action": "EXIT", "symbol": "AAA", "price": 1.8, "reasons": ["structure_break"]}, watch, positions, persist=False)
+    order = execute_exit({"action": "EXIT", "symbol": "AAA", "price": 1.8, "reasons": ["structure_break"]}, watch, positions, persist=False, record_history=False)
     assert order["action"] == "CLOSE" and order["gross_pnl"] == -2
     assert "AAA" not in watch and "AAA" not in positions
     print("demo ok")

@@ -20,6 +20,32 @@ def fee_usdt(notional, fee_bps):
     return round(float(notional) * float(fee_bps) / 10000.0, 8)
 
 
+def trade_history(positions):
+    history = read_json("trade_history.json", [])
+    seen_opens = {
+        (row.get("symbol"), row.get("opened_at"))
+        for row in history
+        if row.get("action") in ("BUY", "OPEN") and row.get("opened_at")
+    }
+    for symbol, p in positions.items():
+        opened_at = p.get("opened_at")
+        if opened_at and (symbol, opened_at) not in seen_opens:
+            history.append({
+                "action": "BUY",
+                "symbol": symbol,
+                "price": p.get("entry"),
+                "qty": p.get("qty"),
+                "notional": p.get("notional"),
+                "entry_fee": p.get("entry_fee"),
+                "fee_bps": p.get("fee_bps"),
+                "stop": p.get("stop"),
+                "opened_at": opened_at,
+                "reason": ["current_position"],
+                "synthetic": True,
+            })
+    return sorted(history, key=lambda row: row.get("closed_at") or row.get("opened_at") or 0, reverse=True)
+
+
 def enrich_positions(positions, default_fee_bps):
     out = {}
     total_pnl = 0
@@ -84,13 +110,16 @@ class Handler(SimpleHTTPRequestHandler):
         path = parsed.path
         if path == "/api/state":
             fee_bps = float(os.getenv("FEE_BPS", "10"))
-            positions, pnl, fees = enrich_positions(read_json("positions.json", {}), fee_bps)
+            raw_positions = read_json("positions.json", {})
+            positions, pnl, fees = enrich_positions(raw_positions, fee_bps)
             equity = float(os.getenv("EQUITY", "1000"))
             return self.json({
                 "watchlist": read_json("watchlist.json", {}),
                 "positions": positions,
                 "account": {"initial": equity, "pnl": pnl, "fees": fees, "fee_bps": fee_bps, "equity": equity + pnl},
             })
+        if path == "/api/history":
+            return self.json(trade_history(read_json("positions.json", {})))
         if path == "/api/signals":
             args = type("Args", (), {
                 "max_symbols": 50,

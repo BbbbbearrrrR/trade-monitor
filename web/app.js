@@ -2,7 +2,14 @@ const fmt = n => {
   const v = Number(n);
   return Number.isFinite(v) ? v.toLocaleString(undefined,{maximumFractionDigits:8}) : "";
 };
-const money = n => Number.isFinite(Number(n)) ? `${Number(n)>=0?"+":""}${fmt(n)} USDT` : "";
+const compact = (n, digits=4) => {
+  const v = Number(n);
+  return Number.isFinite(v) ? v.toLocaleString(undefined,{maximumFractionDigits:digits}) : "";
+};
+const price = n => compact(n, 6);
+const qty = n => compact(n, 4);
+const usdt = n => compact(n, 2);
+const money = n => Number.isFinite(Number(n)) ? `${Number(n)>=0?"+":""}${compact(n, 4)} USDT` : "";
 const cls = a => `badge ${a || "HOLD"}`;
 let selectedSymbol = null;
 let chartSymbol = null;
@@ -34,9 +41,28 @@ function bindSelectableRows(){
   });
 }
 
+function eventTime(row){
+  const ts = row.closed_at || row.opened_at || row.created_at;
+  return ts ? new Date(ts * 1000).toLocaleString() : "";
+}
+
+function eventFee(row){
+  return row.entry_fee ?? row.fee ?? "";
+}
+
+function eventDetail(row){
+  if(Number.isFinite(Number(row.gross_pnl))) return money(row.gross_pnl);
+  const reason = row.reason || row.reasons || [];
+  return Array.isArray(reason) ? reason.join(", ") : reason;
+}
+
 async function load(){
   document.getElementById("clock").textContent = new Date().toLocaleString();
-  const [state, signals] = await Promise.all([fetch("/api/state").then(r=>r.json()), fetch("/api/signals").then(r=>r.json())]);
+  const [state, signals, history] = await Promise.all([
+    fetch("/api/state").then(r=>r.json()),
+    fetch("/api/signals").then(r=>r.json()),
+    fetch("/api/history").then(r=>r.json())
+  ]);
   lastSignals = signals;
   lastPositions = state.positions || {};
   const watch = Object.values(state.watchlist || {});
@@ -55,8 +81,13 @@ async function load(){
   }).join("");
   document.getElementById("positions").innerHTML = positions.map(([sym,p])=>{
     const stale = p.mark == null || p.market_status !== "TRADING";
-    const mark = stale ? `<span class="warn">${p.market_status || "NO MARK"}</span>` : fmt(p.mark);
-    return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${fmt(p.entry)}</td><td>${mark}</td><td>${fmt(p.qty)}</td><td class="neg">${fmt(p.stop)}</td><td class="${(p.gross_pnl??0)>=0?"pos":"neg"}">${money(p.gross_pnl)}</td><td>${fmt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
+    const mark = stale ? `<span class="warn">${p.market_status || "NO MARK"}</span>` : price(p.mark);
+    return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${price(p.entry)}</td><td>${mark}</td><td>${qty(p.qty)}</td><td class="neg">${price(p.stop)}</td><td class="${(p.gross_pnl??0)>=0?"pos":"neg"}">${money(p.gross_pnl)}</td><td>${usdt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
+  }).join("");
+  document.getElementById("history").innerHTML = history.slice(0, 50).map(row=>{
+    const action = row.action === "CLOSE" ? "CLOSE" : "BUY";
+    const pnl = Number(row.gross_pnl);
+    return `<tr><td>${eventTime(row)}</td><td>${row.symbol || ""}</td><td><span class="${cls(action === "BUY" ? "OPEN" : "EXIT")}">${action}</span></td><td>${price(row.price)}</td><td>${qty(row.qty)}</td><td>${usdt(row.notional)} USDT</td><td>${usdt(eventFee(row))} USDT</td><td class="${Number.isFinite(pnl) ? (pnl >= 0 ? "pos" : "neg") : ""}">${eventDetail(row)}</td></tr>`;
   }).join("");
   const selected = signalForSymbol(selectedSymbol, signals, state.positions || {}) || signals[0] || (positions[0] ? {symbol: positions[0][0], action: "POSITION"} : null);
   const nextSymbol = selected?.symbol || null;

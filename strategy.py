@@ -75,15 +75,17 @@ def run_once(signals, args):
             candidates.append(signal)
     made = orders(candidates, args.equity, args.slots, args.stop_buffer, positions, args.fee_bps)
     for order in made:
+        opened_at = int(time.time())
         positions[order["symbol"]] = {
             "entry": order["price"],
             "qty": order["qty"],
             "notional": order["notional"],
             "entry_fee": order["entry_fee"],
             "fee_bps": order["fee_bps"],
-            "opened_at": int(time.time()),
+            "opened_at": opened_at,
             "stop": order["stop"],
         }
+        watcher.append_history({**order, "opened_at": opened_at, "reason": order.get("reason", ["paper_entry"])})
         print(json.dumps(order, ensure_ascii=False))
     write_json(POSITIONS, positions)
     watcher.write_json(watcher.WATCHLIST, watch)

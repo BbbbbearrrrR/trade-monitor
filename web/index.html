@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Trade Monitor</title>
-  <link rel="stylesheet" href="/style.css?v=inactive-contracts" />
+  <link rel="stylesheet" href="/style.css?v=history-table" />
 </head>
 <body>
   <aside>
@@ -50,8 +50,12 @@
         <h2>Open Positions</h2>
         <table><thead><tr><th>Symbol</th><th>Entry</th><th>Mark</th><th>Qty</th><th>Stop</th><th>Gross</th><th>Fee</th><th>Net PnL</th></tr></thead><tbody id="positions"></tbody></table>
       </div>
+      <div class="panel history">
+        <h2>Trade History</h2>
+        <table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Price</th><th>Qty</th><th>Notional</th><th>Fee</th><th>PnL / Reason</th></tr></thead><tbody id="history"></tbody></table>
+      </div>
     </section>
   </main>
-  <script src="/app.js?v=inactive-contracts"></script>
+  <script src="/app.js?v=history-table"></script>
 </body>
 </html>

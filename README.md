@@ -12,6 +12,7 @@ This project is for monitoring and paper trading only. It reads public Binance F
 - Calculates support and resistance from recent candle structure.
 - Opens paper positions when price breaks resistance with a short-window quote-volume spike.
 - Tracks paper positions and estimated fees/PnL in `positions.json`.
+- Records paper order history in `trade_history.json`.
 - Serves a local dashboard with watchlist signals, open positions, and candlestick levels.
 
 ## Strategy Summary
@@ -132,6 +133,7 @@ These files are generated locally and intentionally ignored by git:
 
 - `watchlist.json`
 - `positions.json`
+- `trade_history.json`
 - `pending.json`
 - `*.log`
 - `*.pid`
