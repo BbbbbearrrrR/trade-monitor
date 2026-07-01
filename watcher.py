@@ -170,6 +170,30 @@ def take_profit_signals(positions):
     return out
 
 
+def stop_loss_signals(positions):
+    out = []
+    for symbol, position in positions.items():
+        stop = position.get("stop")
+        if not stop:
+            continue
+        try:
+            price = mark_price(symbol)
+        except Exception:
+            continue
+        qty = float(position.get("qty") or 0)
+        if qty <= 0:
+            continue
+        if price <= float(stop):
+            out.append({
+                "action": "EXIT",
+                "symbol": symbol,
+                "price": price,
+                "qty": qty,
+                "reasons": ["stop_loss"],
+            })
+    return out
+
+
 def execute_exit(signal, watch=None, positions=None, persist=True, record_history=True):
     symbol = signal.get("symbol")
     if not symbol:
@@ -333,7 +357,13 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike
         "setup_only": setup_only,
     })()
     changed = False
+    for stop_signal in stop_loss_signals(positions):
+        print(json.dumps(stop_signal, ensure_ascii=False))
+        execute_exit(stop_signal, watch, positions, persist=False)
+        changed = True
     for tp_signal in take_profit_signals(positions):
+        if tp_signal["symbol"] not in positions:
+            continue
         print(json.dumps(tp_signal, ensure_ascii=False))
         position = positions.get(tp_signal["symbol"])
         if position:
@@ -382,6 +412,7 @@ def demo():
     positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20, "entry_fee": 0.2, "fee_bps": 10, "leverage": 1}}
     order = execute_partial_exit({"symbol": "AAA", "price": 2.3, "qty": 5, "reasons": ["take_profit_1"]}, positions, persist=False, record_history=False)
     assert order["entry_fee"] == 0.1 and positions["AAA"]["entry_fee"] == 0.1
+    assert stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 2.1}}) == []
     print("demo ok")
 
 def main():
