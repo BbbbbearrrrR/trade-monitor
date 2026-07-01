@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import functools
 import json
 import os
 import sys
@@ -43,8 +44,25 @@ def bars(symbol, interval, limit):
     return [{"t": int(r[0] / 1000), "o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4]), "vol": float(r[5]), "qvol": float(r[7]), "trades": int(r[8])} for r in rows]
 
 
+@functools.lru_cache(maxsize=1)
+def exchange_symbols():
+    return {s["symbol"]: s for s in get_json("/fapi/v1/exchangeInfo")["symbols"]}
+
+
+def symbol_info(symbol):
+    return exchange_symbols().get(symbol)
+
+
+def symbol_status(symbol):
+    info = symbol_info(symbol)
+    return info.get("status") if info else "UNKNOWN"
+
+
 def mark_price(symbol):
-    return float(get_json("/fapi/v1/ticker/price", {"symbol": symbol})["price"])
+    data = get_json("/fapi/v1/ticker/price", {"symbol": symbol})
+    if not data.get("price"):
+        raise ValueError(f"{symbol} has no futures ticker price; status={symbol_status(symbol)}")
+    return float(data["price"])
 
 
 def exit_order(symbol, position, signal):

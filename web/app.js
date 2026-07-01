@@ -1,4 +1,8 @@
-const fmt = n => n == null ? "" : Number(n).toLocaleString(undefined,{maximumFractionDigits:8});
+const fmt = n => {
+  const v = Number(n);
+  return Number.isFinite(v) ? v.toLocaleString(undefined,{maximumFractionDigits:8}) : "";
+};
+const money = n => Number.isFinite(Number(n)) ? `${Number(n)>=0?"+":""}${fmt(n)} USDT` : "";
 const cls = a => `badge ${a || "HOLD"}`;
 let selectedSymbol = null;
 let chartSymbol = null;
@@ -49,7 +53,11 @@ async function load(){
     const ch = meta.change24h ?? 0;
     return `<tr data-symbol="${s.symbol}" class="${s.symbol===selectedSymbol?"selected":""}"><td>${s.symbol}</td><td class="${ch>=0?"pos":"neg"}">${fmt(ch)}%</td><td>${meta.score??""}</td><td>${fmt(s.support)}</td><td>${fmt(s.resistance)}</td><td>${fmt(s.qvol)}</td><td>${fmt(s.volume_ratio)}</td><td><span class="${cls(s.action)}">${s.action}</span></td></tr>`;
   }).join("");
-  document.getElementById("positions").innerHTML = positions.map(([sym,p])=>`<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""}"><td>${sym}</td><td>${fmt(p.entry)}</td><td>${fmt(p.mark)}</td><td>${fmt(p.qty)}</td><td class="neg">${fmt(p.stop)}</td><td class="${(p.gross_pnl??0)>=0?"pos":"neg"}">${(p.gross_pnl??0)>=0?"+":""}${fmt(p.gross_pnl)} USDT</td><td>${fmt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${(p.pnl??0)>=0?"+":""}${fmt(p.pnl)} USDT</td></tr>`).join("");
+  document.getElementById("positions").innerHTML = positions.map(([sym,p])=>{
+    const stale = p.mark == null || p.market_status !== "TRADING";
+    const mark = stale ? `<span class="warn">${p.market_status || "NO MARK"}</span>` : fmt(p.mark);
+    return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${fmt(p.entry)}</td><td>${mark}</td><td>${fmt(p.qty)}</td><td class="neg">${fmt(p.stop)}</td><td class="${(p.gross_pnl??0)>=0?"pos":"neg"}">${money(p.gross_pnl)}</td><td>${fmt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
+  }).join("");
   const selected = signalForSymbol(selectedSymbol, signals, state.positions || {}) || signals[0] || (positions[0] ? {symbol: positions[0][0], action: "POSITION"} : null);
   const nextSymbol = selected?.symbol || null;
   const shouldDrawChart = selected && (chartSymbol !== nextSymbol || Date.now() - lastChartAt > 60000);
@@ -75,6 +83,7 @@ async function draw(s, showLoading=true){
       if(!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     });
+    if(data.error) throw new Error(data.error);
     renderCandles(box, data, s);
     chartSymbol = s.symbol;
     lastChartAt = Date.now();

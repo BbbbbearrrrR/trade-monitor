@@ -25,25 +25,36 @@ def enrich_positions(positions, default_fee_bps):
     total_pnl = 0
     total_fee = 0
     for symbol, p in positions.items():
+        market_status = watcher.symbol_status(symbol)
+        mark_error = None
         try:
             price = watcher.mark_price(symbol)
-        except Exception:
-            price = p.get("entry", 0)
+        except Exception as exc:
+            price = None
+            mark_error = str(exc)
         entry = float(p.get("entry") or 0)
         qty = float(p.get("qty") or 0)
         fee_bps = float(p.get("fee_bps", default_fee_bps) or 0)
         entry_notional = float(p.get("notional") or (entry * qty))
-        mark_notional = price * qty
         entry_fee = float(p.get("entry_fee") or fee_usdt(entry_notional, fee_bps))
-        exit_fee = fee_usdt(mark_notional, fee_bps)
-        fee = entry_fee + exit_fee
-        gross_pnl = (price - entry) * qty
-        pnl = gross_pnl - fee
-        total_pnl += pnl
+        if price is None:
+            exit_fee = None
+            fee = entry_fee
+            gross_pnl = None
+            pnl = None
+        else:
+            mark_notional = price * qty
+            exit_fee = fee_usdt(mark_notional, fee_bps)
+            fee = entry_fee + exit_fee
+            gross_pnl = (price - entry) * qty
+            pnl = gross_pnl - fee
+            total_pnl += pnl
         total_fee += fee
         out[symbol] = {
             **p,
             "mark": price,
+            "market_status": market_status,
+            "mark_error": mark_error,
             "notional": round(entry_notional, 8),
             "gross_pnl": gross_pnl,
             "entry_fee": entry_fee,
@@ -51,7 +62,7 @@ def enrich_positions(positions, default_fee_bps):
             "fee": fee,
             "fee_bps": fee_bps,
             "pnl": pnl,
-            "pnl_pct": ((pnl / entry_notional) * 100 if entry_notional else 0),
+            "pnl_pct": ((pnl / entry_notional) * 100 if pnl is not None and entry_notional else None),
         }
     return out, total_pnl, total_fee
 
@@ -97,9 +108,14 @@ class Handler(SimpleHTTPRequestHandler):
             interval = query.get("interval") or "5m"
             limit = max(20, min(int(query.get("limit") or 96), 300))
             try:
+                status = watcher.symbol_status(symbol)
+                if status != "TRADING":
+                    return self.json({"error": f"{symbol} futures contract is {status}", "symbol": symbol, "status": status})
                 rows = watcher.bars(symbol, interval, limit)
+                if rows and not any(r.get("trades") or r.get("qvol") for r in rows):
+                    return self.json({"error": f"{symbol} has no traded candles in this window", "symbol": symbol, "status": status})
                 levels = watcher.structure(rows[-16:-1]) if len(rows) >= 16 else {"support": None, "resistance": None}
-                return self.json({"symbol": symbol, "interval": interval, "rows": rows, "levels": levels})
+                return self.json({"symbol": symbol, "interval": interval, "status": status, "rows": rows, "levels": levels})
             except Exception as exc:
                 return self.json({"error": str(exc), "symbol": symbol})
         return super().do_GET()
