@@ -143,24 +143,24 @@ def demo():
     ]
     result = orders(
         candidates,
-        1000,
+        1001,
         10,
         0.01,
     )
     assert len(result) == 2
-    assert result[0]["notional"] == 100
-    assert result[0]["margin"] == 100
-    assert result[0]["qty"] == 50
-    assert result[0]["entry_fee"] == 0.1
+    assert result[0]["notional"] == 100.1
+    assert result[0]["margin"] == 100.1
+    assert result[0]["qty"] == 50.05
+    assert result[0]["entry_fee"] == 0.1001
     assert result[0]["fee_bps"] == 10
     assert result[0]["leverage"] == 1
     assert result[0]["stop"] == 1.782
     assert result[0]["take_profit_1"] == 2.3
     assert result[0]["take_profit_2"] == 2.6
-    assert orders(candidates, 1000, 1, 0.01, {"AAA": {}}) == []
-    nearly_full = {str(i): {"notional": 100, "margin": 100, "entry_fee": 0.1, "leverage": 1} for i in range(9)}
-    result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1000, 10, 0.01, nearly_full)
-    assert result[0]["leverage"] == 2 and result[0]["margin"] == 50
+    assert orders(candidates, 1001, 1, 0.01, {"AAA": {}}) == []
+    nearly_full = {str(i): {"notional": 100.1, "margin": 100.1, "entry_fee": 0.1001, "leverage": 1} for i in range(9)}
+    result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1001, 10, 0.01, nearly_full)
+    assert result[0]["leverage"] == 2 and result[0]["margin"] == 50.05
     print("demo ok")
 
 
