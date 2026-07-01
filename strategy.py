@@ -126,6 +126,9 @@ def run_once(signals, args):
             "leverage": order["leverage"],
             "opened_at": opened_at,
             "stop": order["stop"],
+            "take_profit_1": order["take_profit_1"],
+            "take_profit_2": order["take_profit_2"],
+            "take_profit_qty_pct": order["take_profit_qty_pct"],
         }
         watcher.append_history({**order, "opened_at": opened_at, "reason": order.get("reason", ["paper_entry"])})
         print(json.dumps(order, ensure_ascii=False))

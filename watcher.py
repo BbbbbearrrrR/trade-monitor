@@ -76,9 +76,14 @@ def mark_price(symbol):
 
 def exit_order(symbol, position, signal):
     price = signal.get("price") or mark_price(symbol)
-    qty = float(position.get("qty") or 0)
+    qty = float(signal.get("qty") or position.get("qty") or 0)
+    position_qty = float(position.get("qty") or 0)
     entry = float(position.get("entry") or 0)
+    fee_bps = float(position.get("fee_bps") or 0)
+    entry_fee = float(position.get("entry_fee") or 0)
+    allocated_entry_fee = entry_fee * (qty / position_qty) if position_qty else entry_fee
     notional = round(price * qty, 8)
+    exit_fee = notional * fee_bps / 10000.0
     return {
         "action": "CLOSE",
         "symbol": symbol,
@@ -87,9 +92,82 @@ def exit_order(symbol, position, signal):
         "notional": notional,
         "entry": entry,
         "gross_pnl": round((price - entry) * qty, 8),
+        "entry_fee": round(allocated_entry_fee, 8),
+        "exit_fee": round(exit_fee, 8),
+        "fee": round(allocated_entry_fee + exit_fee, 8),
+        "fee_bps": fee_bps,
         "reason": signal.get("reasons", []),
         "closed_at": int(time.time()),
     }
+
+
+def execute_partial_exit(signal, positions=None, persist=True, record_history=True):
+    symbol = signal.get("symbol")
+    if not symbol:
+        return None
+
+    own_positions = positions is None
+    positions = read_json(POSITIONS, {}) if own_positions else positions
+    position = positions.get(symbol)
+    if not position:
+        return None
+
+    qty = min(float(signal.get("qty") or 0), float(position.get("qty") or 0))
+    if qty <= 0:
+        return None
+
+    order = exit_order(symbol, position, {**signal, "qty": qty})
+    remaining_qty = round(float(position.get("qty") or 0) - qty, 8)
+    if remaining_qty <= 0:
+        positions.pop(symbol, None)
+    else:
+        position["qty"] = remaining_qty
+        entry = float(position.get("entry") or 0)
+        position["notional"] = round(entry * remaining_qty, 8)
+        position["entry_fee"] = round(float(position.get("entry_fee") or 0) - float(order.get("entry_fee") or 0), 8)
+        leverage = max(1.0, float(position.get("leverage") or 1))
+        position["margin"] = round(position["notional"] / leverage, 8)
+
+    if record_history:
+        append_history(order)
+    if persist or own_positions:
+        write_json(POSITIONS, positions)
+    print(json.dumps(order, ensure_ascii=False))
+    return order
+
+
+def take_profit_signals(positions):
+    out = []
+    for symbol, position in positions.items():
+        try:
+            price = mark_price(symbol)
+        except Exception:
+            continue
+        qty = float(position.get("qty") or 0)
+        if qty <= 0:
+            continue
+        tp1 = position.get("take_profit_1")
+        tp2 = position.get("take_profit_2")
+        hit = set(position.get("take_profit_hit") or [])
+        if tp1 and "tp1" not in hit and price >= float(tp1):
+            out.append({
+                "action": "PARTIAL_EXIT",
+                "symbol": symbol,
+                "price": price,
+                "qty": round(qty * 0.5, 8),
+                "tp_key": "tp1",
+                "reasons": ["take_profit_1"],
+            })
+        elif tp2 and "tp2" not in hit and price >= float(tp2):
+            out.append({
+                "action": "PARTIAL_EXIT",
+                "symbol": symbol,
+                "price": price,
+                "qty": qty,
+                "tp_key": "tp2",
+                "reasons": ["take_profit_2"],
+            })
+    return out
 
 
 def execute_exit(signal, watch=None, positions=None, persist=True, record_history=True):
@@ -255,6 +333,15 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike
         "setup_only": setup_only,
     })()
     changed = False
+    for tp_signal in take_profit_signals(positions):
+        print(json.dumps(tp_signal, ensure_ascii=False))
+        position = positions.get(tp_signal["symbol"])
+        if position:
+            hit = set(position.get("take_profit_hit") or [])
+            hit.add(tp_signal["tp_key"])
+            position["take_profit_hit"] = sorted(hit)
+        execute_partial_exit(tp_signal, positions, persist=False)
+        changed = True
     for out in current_signals(args):
         print(json.dumps(out, ensure_ascii=False))
         if out["action"] == "EXIT":
@@ -289,6 +376,12 @@ def demo():
     order = execute_exit({"action": "EXIT", "symbol": "AAA", "price": 1.8, "reasons": ["structure_break"]}, watch, positions, persist=False, record_history=False)
     assert order["action"] == "CLOSE" and order["gross_pnl"] == -2
     assert "AAA" not in watch and "AAA" not in positions
+    positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20, "leverage": 1}}
+    order = execute_partial_exit({"symbol": "AAA", "price": 2.3, "qty": 5, "reasons": ["take_profit_1"]}, positions, persist=False, record_history=False)
+    assert order["gross_pnl"] == 1.5 and positions["AAA"]["qty"] == 5
+    positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20, "entry_fee": 0.2, "fee_bps": 10, "leverage": 1}}
+    order = execute_partial_exit({"symbol": "AAA", "price": 2.3, "qty": 5, "reasons": ["take_profit_1"]}, positions, persist=False, record_history=False)
+    assert order["entry_fee"] == 0.1 and positions["AAA"]["entry_fee"] == 0.1
     print("demo ok")
 
 def main():
