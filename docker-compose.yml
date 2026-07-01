@@ -12,6 +12,8 @@ services:
   scanner:
     build: .
     command: python scanner.py
+    environment:
+      MIN_DELIVERY_DAYS: ${MIN_DELIVERY_DAYS:-7}
     volumes:
       - .:/app
   strategy:

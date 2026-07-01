@@ -100,6 +100,7 @@ Scanner variables:
 | `SCAN_LIMIT` | `30` | Number of top gainers considered |
 | `MIN_CHANGE` | `10` | Minimum 24h percent change |
 | `MAX_CHANGE` | `30` | Maximum 24h percent change |
+| `MIN_DELIVERY_DAYS` | `7` | Exclude contracts whose `deliveryDate` is within this many days |
 | `SCAN_SECONDS` | `600` | Scanner refresh interval |
 
 ## Local Commands
@@ -149,3 +150,4 @@ The runtime data source is Binance USDT-M Futures:
 - mark reference used by the dashboard: `/fapi/v1/ticker/price`
 
 The scanner filters for `contractType = PERPETUAL`, `status = TRADING`, and `quoteAsset = USDT`.
+It also excludes contracts whose `deliveryDate` is too close. The default exclusion window is `7` days and can be changed with `MIN_DELIVERY_DAYS`.
