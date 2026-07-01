@@ -77,8 +77,8 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
             "fee_bps": float(fee_bps),
             "leverage": int(leverage) if leverage.is_integer() else leverage,
             "stop": round(s["support"] * (1 - stop_buffer), 8) if s.get("support") else None,
-            "take_profit_1": round(s["price"] * 1.25, 8),
-            "take_profit_2": round(s["price"] * 1.50, 8),
+            "take_profit_1": round(s["price"] * 1.15, 8),
+            "take_profit_2": round(s["price"] * 1.30, 8),
             "take_profit_qty_pct": [50, 50],
         }
         if leverage > base_leverage:
@@ -152,8 +152,8 @@ def demo():
     assert result[0]["fee_bps"] == 10
     assert result[0]["leverage"] == 1
     assert result[0]["stop"] == 1.782
-    assert result[0]["take_profit_1"] == 2.5
-    assert result[0]["take_profit_2"] == 3.0
+    assert result[0]["take_profit_1"] == 2.3
+    assert result[0]["take_profit_2"] == 2.6
     assert orders(candidates, 1000, 1, 0.01, {"AAA": {}}) == []
     nearly_full = {str(i): {"notional": 125, "margin": 125, "entry_fee": 0.125, "leverage": 1} for i in range(7)}
     result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1000, 8, 0.01, nearly_full)
