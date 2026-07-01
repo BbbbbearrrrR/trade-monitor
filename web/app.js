@@ -21,6 +21,24 @@ let lastHistory = [];
 let dashboardLoadInFlight = false;
 let renderFrame = null;
 
+function setText(id, value){
+  const node = document.getElementById(id);
+  if(node && node.textContent !== String(value)) node.textContent = value;
+}
+
+function setClassName(id, value){
+  const node = document.getElementById(id);
+  if(node && node.className !== value) node.className = value;
+}
+
+function setHtmlIfChanged(id, html){
+  const node = document.getElementById(id);
+  if(node && node.dataset.html !== html){
+    node.innerHTML = html;
+    node.dataset.html = html;
+  }
+}
+
 function signalForSymbol(symbol, signals, positions){
   if(!symbol) return null;
   const signal = signals.find(s => s.symbol === symbol);
@@ -35,13 +53,13 @@ function syncSelection(){
   });
 }
 
-function bindSelectableRows(){
-  document.querySelectorAll("#signals tr,#positions tr").forEach(row => {
-    row.onclick = () => {
-      selectedSymbol = row.dataset.symbol;
-      syncSelection();
-      draw(signalForSymbol(selectedSymbol, lastSignals, lastPositions), true);
-    };
+function bindSelectableTables(){
+  document.querySelector(".grid").addEventListener("click", event => {
+    const row = event.target.closest("#signals tr,#positions tr");
+    if(!row) return;
+    selectedSymbol = row.dataset.symbol;
+    syncSelection();
+    draw(signalForSymbol(selectedSymbol, lastSignals, lastPositions), true);
   });
 }
 
@@ -94,13 +112,6 @@ function render(updatedAt){
   const positions = Object.entries(state.positions || {});
   const pnl = state.account?.pnl ?? 0;
   const clockText = updatedAt ? new Date(updatedAt * 1000).toLocaleString() : new Date().toLocaleString();
-  const statsHtml = `
-    <div><small>Watchlist</small><strong id="watchCount">${watch.length}</strong></div>
-    <div><small>Open Signals</small><strong id="openCount">${signals.filter(s=>s.action==="OPEN").length}</strong></div>
-    <div><small>Positions</small><strong id="posCount">${positions.length} / ${state.account?.slots ?? 10}</strong></div>
-    <div><small>Equity</small><strong id="equity">${fmt(state.account?.equity ?? 0)} USDT</strong></div>
-    <div><small>Net PnL</small><strong id="pnl" class="${pnl >= 0 ? "pos" : "neg"}">${pnl>=0?"+":""}${fmt(pnl)} USDT</strong></div>
-  `;
   const signalsHtml = signals.map(s=>{
     const meta = state.watchlist[s.symbol] || {};
     const ch = meta.change24h ?? 0;
@@ -116,17 +127,21 @@ function render(updatedAt){
     const pnl = Number(row.gross_pnl);
     return `<tr><td>${eventTime(row)}</td><td>${row.symbol || ""}</td><td><span class="${cls(action === "BUY" ? "OPEN" : "EXIT")}">${action}</span></td><td>${price(row.price)}</td><td>${qty(row.qty)}</td><td>${usdt(row.notional)} USDT</td><td>${usdt(eventFee(row))} USDT</td><td class="${Number.isFinite(pnl) ? (pnl >= 0 ? "pos" : "neg") : ""}">${eventDetail(row)}</td></tr>`;
   }).join("");
-  document.getElementById("clock").textContent = clockText;
-  document.querySelector(".stats").innerHTML = statsHtml;
-  document.getElementById("signals").innerHTML = signalsHtml;
-  document.getElementById("positions").innerHTML = positionsHtml;
-  document.getElementById("history").innerHTML = historyHtml;
+  setText("clock", clockText);
+  setText("watchCount", watch.length);
+  setText("openCount", signals.filter(s=>s.action==="OPEN").length);
+  setText("posCount", `${positions.length} / ${state.account?.slots ?? 10}`);
+  setText("equity", `${fmt(state.account?.equity ?? 0)} USDT`);
+  setText("pnl", `${pnl>=0?"+":""}${fmt(pnl)} USDT`);
+  setClassName("pnl", pnl >= 0 ? "pos" : "neg");
+  setHtmlIfChanged("signals", signalsHtml);
+  setHtmlIfChanged("positions", positionsHtml);
+  setHtmlIfChanged("history", historyHtml);
   const selected = signalForSymbol(selectedSymbol, signals, state.positions || {}) || signals[0] || (positions[0] ? {symbol: positions[0][0], action: "POSITION"} : null);
   const nextSymbol = selected?.symbol || null;
   const shouldDrawChart = selected && (chartSymbol !== nextSymbol || Date.now() - lastChartAt > 60000);
   selectedSymbol = nextSymbol;
   syncSelection();
-  bindSelectableRows();
   if(shouldDrawChart){
     draw(selected, chartSymbol !== selectedSymbol);
   }else{
@@ -196,4 +211,5 @@ function renderCandles(box, data, signal){
   box.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" role="img" aria-label="${data.symbol} 5 minute candlestick chart">${grid}<line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}" class="axisLine"/><line x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}" class="axisLine"/>${candles}${line(data.levels?.support ?? signal.support, "Support", "supportLine")}${line(data.levels?.resistance ?? signal.resistance, "Resistance", "resistanceLine")}<text x="${pad.l}" y="${h-10}" class="axisText">${first}</text><text x="${w-pad.r-44}" y="${h-10}" class="axisText">${last}</text></svg>`;
 }
 
+bindSelectableTables();
 loadDashboard();
