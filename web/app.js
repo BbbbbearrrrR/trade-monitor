@@ -18,8 +18,7 @@ let lastSignals = [];
 let lastPositions = {};
 let lastState = null;
 let lastHistory = [];
-let fastLoadInFlight = false;
-let signalsLoadInFlight = false;
+let dashboardLoadInFlight = false;
 
 function signalForSymbol(symbol, signals, positions){
   if(!symbol) return null;
@@ -60,31 +59,18 @@ function eventDetail(row){
   return Array.isArray(reason) ? reason.join(", ") : reason;
 }
 
-async function loadFast(){
-  if(fastLoadInFlight) return;
-  fastLoadInFlight = true;
+async function loadDashboard(){
+  if(dashboardLoadInFlight) return;
+  dashboardLoadInFlight = true;
   document.getElementById("clock").textContent = new Date().toLocaleString();
   try{
-    const [state, history] = await Promise.all([
-      fetch("/api/state").then(r=>r.json()),
-      fetch("/api/history").then(r=>r.json())
-    ]);
-    lastState = state;
-    lastHistory = history;
+    const snapshot = await fetch("/api/dashboard").then(r=>r.json());
+    lastState = snapshot.state;
+    lastHistory = snapshot.history || [];
+    lastSignals = snapshot.signals || [];
     render();
   }finally{
-    fastLoadInFlight = false;
-  }
-}
-
-async function loadSignals(){
-  if(signalsLoadInFlight) return;
-  signalsLoadInFlight = true;
-  try{
-    lastSignals = await fetch("/api/signals").then(r=>r.json());
-    render();
-  }finally{
-    signalsLoadInFlight = false;
+    dashboardLoadInFlight = false;
   }
 }
 
@@ -193,7 +179,5 @@ function renderCandles(box, data, signal){
   box.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" role="img" aria-label="${data.symbol} 5 minute candlestick chart">${grid}<line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}" class="axisLine"/><line x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}" class="axisLine"/>${candles}${line(data.levels?.support ?? signal.support, "Support", "supportLine")}${line(data.levels?.resistance ?? signal.resistance, "Resistance", "resistanceLine")}<text x="${pad.l}" y="${h-10}" class="axisText">${first}</text><text x="${w-pad.r-44}" y="${h-10}" class="axisText">${last}</text></svg>`;
 }
 
-loadFast();
-loadSignals();
-setInterval(loadFast, 1000);
-setInterval(loadSignals, 1000);
+loadDashboard();
+setInterval(loadDashboard, 1000);

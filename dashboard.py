@@ -173,6 +173,50 @@ def signal_snapshot():
     return None
 
 
+def state_payload():
+    fee_bps = float(os.getenv("FEE_BPS", "10"))
+    raw_positions = read_json("positions.json", {})
+    positions, unrealized_pnl, unrealized_fees = enrich_positions(raw_positions, fee_bps)
+    realized_pnl, realized_fees = realized_totals(read_json("trade_history.json", []), fee_bps)
+    pnl = realized_pnl + unrealized_pnl
+    fees = realized_fees + unrealized_fees
+    equity = float(os.getenv("EQUITY", "1000"))
+    slots = int(os.getenv("SLOTS", "10"))
+    return {
+        "watchlist": read_json("watchlist.json", {}),
+        "positions": positions,
+        "account": {
+            "initial": equity,
+            "slots": slots,
+            "pnl": pnl,
+            "realized_pnl": realized_pnl,
+            "unrealized_pnl": unrealized_pnl,
+            "fees": fees,
+            "realized_fees": realized_fees,
+            "unrealized_fees": unrealized_fees,
+            "fee_bps": fee_bps,
+            "equity": equity + pnl,
+        },
+    }
+
+
+def signals_payload():
+    signals = signal_snapshot()
+    if signals is None:
+        args = type("Args", (), {
+            "max_symbols": 50,
+            "level_kline": os.getenv("LEVEL_KLINE", "15m"),
+            "volume_kline": os.getenv("VOLUME_KLINE", "1m"),
+            "min_qvol": float(os.getenv("MIN_QVOL", "50000")),
+            "vol_mult": float(os.getenv("VOL_MULT", "2")),
+            "spike_minutes": int(os.getenv("SPIKE_MINUTES", "3")),
+            "breakout_buffer_pct": float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")),
+            "setup_only": os.getenv("SETUP_ONLY", "1") != "0",
+        })()
+        signals = strategy.current_signals(args)
+    return apply_exit_signals(signals)
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "web"), **kwargs)
@@ -188,48 +232,20 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path == "/api/state":
-            fee_bps = float(os.getenv("FEE_BPS", "10"))
-            raw_positions = read_json("positions.json", {})
-            positions, unrealized_pnl, unrealized_fees = enrich_positions(raw_positions, fee_bps)
-            realized_pnl, realized_fees = realized_totals(read_json("trade_history.json", []), fee_bps)
-            pnl = realized_pnl + unrealized_pnl
-            fees = realized_fees + unrealized_fees
-            equity = float(os.getenv("EQUITY", "1000"))
-            slots = int(os.getenv("SLOTS", "10"))
+        if path == "/api/dashboard":
+            state = state_payload()
             return self.json({
-                "watchlist": read_json("watchlist.json", {}),
-                "positions": positions,
-                "account": {
-                    "initial": equity,
-                    "slots": slots,
-                    "pnl": pnl,
-                    "realized_pnl": realized_pnl,
-                    "unrealized_pnl": unrealized_pnl,
-                    "fees": fees,
-                    "realized_fees": realized_fees,
-                    "unrealized_fees": unrealized_fees,
-                    "fee_bps": fee_bps,
-                    "equity": equity + pnl,
-                },
+                "state": state,
+                "history": trade_history(state["positions"]),
+                "signals": signals_payload(),
+                "updated_at": int(__import__("time").time()),
             })
+        if path == "/api/state":
+            return self.json(state_payload())
         if path == "/api/history":
             return self.json(trade_history(read_json("positions.json", {})))
         if path == "/api/signals":
-            signals = signal_snapshot()
-            if signals is None:
-                args = type("Args", (), {
-                    "max_symbols": 50,
-                    "level_kline": os.getenv("LEVEL_KLINE", "15m"),
-                    "volume_kline": os.getenv("VOLUME_KLINE", "1m"),
-                    "min_qvol": float(os.getenv("MIN_QVOL", "50000")),
-                    "vol_mult": float(os.getenv("VOL_MULT", "2")),
-                    "spike_minutes": int(os.getenv("SPIKE_MINUTES", "3")),
-                    "breakout_buffer_pct": float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")),
-                    "setup_only": os.getenv("SETUP_ONLY", "1") != "0",
-                })()
-                signals = strategy.current_signals(args)
-            return self.json(apply_exit_signals(signals))
+            return self.json(signals_payload())
         if path == "/api/klines":
             query = dict(__import__("urllib.parse").parse.parse_qsl(parsed.query))
             symbol = (query.get("symbol") or "BTCUSDT").upper()
