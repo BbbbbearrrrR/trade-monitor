@@ -6,6 +6,7 @@ import sys
 import time
 from pathlib import Path
 
+import binance_live
 import watcher
 
 POSITIONS = Path("positions.json")
@@ -31,6 +32,47 @@ def position_margin(position):
 
 def used_cash(positions):
     return sum(position_margin(p) + float(p.get("entry_fee") or 0) for p in (positions or {}).values())
+
+
+def realized_pnl(history, default_fee_bps):
+    pnl = 0
+    for row in history:
+        if row.get("action") != "CLOSE":
+            continue
+        fee_bps = float(row.get("fee_bps", default_fee_bps) or 0)
+        exit_notional = float(row.get("notional") or 0)
+        exit_fee = float(row.get("exit_fee") or fee_usdt(exit_notional, fee_bps))
+        entry_fee = float(row.get("entry_fee") or 0)
+        fee = float(row.get("fee") or (entry_fee + exit_fee))
+        pnl += float(row.get("gross_pnl") or 0) - fee
+    return pnl
+
+
+def unrealized_pnl(positions, default_fee_bps):
+    pnl = 0
+    for symbol, position in (positions or {}).items():
+        try:
+            mark = watcher.mark_price(symbol)
+        except Exception as exc:
+            print(json.dumps({
+                "action": "WARN",
+                "symbol": symbol,
+                "reason": ["mark_price_unavailable"],
+                "error": str(exc),
+            }, ensure_ascii=False), file=sys.stderr)
+            continue
+        entry = float(position.get("entry") or 0)
+        qty = float(position.get("qty") or 0)
+        fee_bps = float(position.get("fee_bps", default_fee_bps) or 0)
+        entry_notional = float(position.get("notional") or (entry * qty))
+        entry_fee = float(position.get("entry_fee") or fee_usdt(entry_notional, fee_bps))
+        exit_fee = fee_usdt(mark * qty, fee_bps)
+        pnl += (mark - entry) * qty - entry_fee - exit_fee
+    return pnl
+
+
+def current_equity(initial_equity, positions, history, fee_bps):
+    return float(initial_equity) + realized_pnl(history, fee_bps) + unrealized_pnl(positions, fee_bps)
 
 
 def choose_leverage(notional, fee, available_cash, base_leverage, max_leverage):
@@ -104,6 +146,7 @@ def current_signals(args):
 
 def run_once(signals, args):
     positions = read_json(POSITIONS, {})
+    history = read_json(watcher.HISTORY, [])
     watch = watcher.read_json(watcher.WATCHLIST, {})
     candidates = []
     for signal in signals:
@@ -113,8 +156,23 @@ def run_once(signals, args):
             continue
         if signal.get("action") == "OPEN" and symbol not in positions:
             candidates.append(signal)
-    made = orders(candidates, args.equity, args.slots, args.stop_buffer, positions, args.fee_bps, args.leverage, args.max_leverage)
+    account_equity = current_equity(args.equity, positions, history, args.fee_bps)
+    made = orders(candidates, account_equity, args.slots, args.stop_buffer, positions, args.fee_bps, args.leverage, args.max_leverage)
     for order in made:
+        if binance_live.live_enabled():
+            try:
+                order = binance_live.open_long(order)
+            except binance_live.BinanceLiveError as exc:
+                print(json.dumps({
+                    "action": "SKIP",
+                    "symbol": order.get("symbol"),
+                    "reason": ["live_order_failed"],
+                    "error": str(exc),
+                }, ensure_ascii=False), file=sys.stderr)
+                continue
+            order["entry_fee"] = fee_usdt(order["notional"], order["fee_bps"])
+            order["take_profit_1"] = round(order["price"] * 1.15, 8)
+            order["take_profit_2"] = round(order["price"] * 1.30, 8)
         opened_at = int(time.time())
         positions[order["symbol"]] = {
             "entry": order["price"],
@@ -130,7 +188,16 @@ def run_once(signals, args):
             "take_profit_2": order["take_profit_2"],
             "take_profit_qty_pct": order["take_profit_qty_pct"],
         }
-        watcher.append_history({**order, "opened_at": opened_at, "reason": order.get("reason", ["paper_entry"])})
+        if order.get("live"):
+            positions[order["symbol"]].update({
+                "live": True,
+                "exchange": order.get("exchange"),
+                "order_id": order.get("order_id"),
+                "client_order_id": order.get("client_order_id"),
+                "status": order.get("status"),
+            })
+        default_reason = ["live_entry"] if order.get("live") else ["paper_entry"]
+        watcher.append_history({**order, "opened_at": opened_at, "reason": order.get("reason", default_reason)})
         print(json.dumps(order, ensure_ascii=False))
     write_json(POSITIONS, positions)
     watcher.write_json(watcher.WATCHLIST, watch)
@@ -161,6 +228,14 @@ def demo():
     nearly_full = {str(i): {"notional": 100.1, "margin": 100.1, "entry_fee": 0.1001, "leverage": 1} for i in range(9)}
     result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1001, 10, 0.01, nearly_full)
     assert result[0]["leverage"] == 2 and result[0]["margin"] == 50.05
+    original_mark_price = watcher.mark_price
+    watcher.mark_price = lambda symbol: {"AAA": 2.2}.get(symbol)
+    try:
+        history = [{"action": "CLOSE", "symbol": "ZZZ", "gross_pnl": 5, "fee": 1}]
+        positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20, "entry_fee": 0.02, "fee_bps": 10}}
+        assert round(current_equity(1000, positions, history, 10), 8) == 1005.958
+    finally:
+        watcher.mark_price = original_mark_price
     print("demo ok")
 
 

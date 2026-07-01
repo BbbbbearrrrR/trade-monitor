@@ -10,6 +10,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import binance_live
+
 API = "https://fapi.binance.com"
 WATCHLIST = Path("watchlist.json")
 POSITIONS = Path("positions.json")
@@ -116,7 +118,26 @@ def execute_partial_exit(signal, positions=None, persist=True, record_history=Tr
     if qty <= 0:
         return None
 
+    live_result = None
+    if binance_live.live_enabled():
+        try:
+            live_result = binance_live.close_long(symbol, qty, signal.get("price"))
+        except binance_live.BinanceLiveError as exc:
+            print(json.dumps({
+                "action": "SKIP",
+                "symbol": symbol,
+                "reason": ["live_close_failed"],
+                "error": str(exc),
+            }, ensure_ascii=False), file=sys.stderr)
+            return None
+        if live_result.get("avg_price"):
+            signal = {**signal, "price": live_result["avg_price"]}
+        if live_result.get("executed_qty"):
+            qty = min(float(live_result["executed_qty"]), float(position.get("qty") or 0))
+
     order = exit_order(symbol, position, {**signal, "qty": qty})
+    if live_result:
+        order.update(live_result)
     remaining_qty = round(float(position.get("qty") or 0) - qty, 8)
     if remaining_qty <= 0:
         positions.pop(symbol, None)
@@ -194,6 +215,37 @@ def stop_loss_signals(positions):
     return out
 
 
+def timeout_signals(positions, timeout_seconds, now=None):
+    if timeout_seconds <= 0:
+        return []
+    now = int(time.time()) if now is None else int(now)
+    out = []
+    for symbol, position in positions.items():
+        opened_at = position.get("opened_at")
+        if not opened_at:
+            continue
+        qty = float(position.get("qty") or 0)
+        if qty <= 0:
+            continue
+        age_seconds = now - int(opened_at)
+        if age_seconds < timeout_seconds:
+            continue
+        try:
+            price = mark_price(symbol)
+        except Exception:
+            price = None
+        out.append({
+            "action": "EXIT",
+            "symbol": symbol,
+            "price": price,
+            "qty": qty,
+            "age_seconds": age_seconds,
+            "timeout_seconds": timeout_seconds,
+            "reasons": ["position_timeout"],
+        })
+    return out
+
+
 def execute_exit(signal, watch=None, positions=None, persist=True, record_history=True):
     symbol = signal.get("symbol")
     if not symbol:
@@ -205,8 +257,29 @@ def execute_exit(signal, watch=None, positions=None, persist=True, record_histor
     positions = read_json(POSITIONS, {}) if own_positions else positions
 
     watch.pop(symbol, None)
+    position = positions.get(symbol)
+    live_result = None
+    if position and binance_live.live_enabled():
+        qty = float(signal.get("qty") or position.get("qty") or 0)
+        try:
+            live_result = binance_live.close_long(symbol, qty, signal.get("price"))
+        except binance_live.BinanceLiveError as exc:
+            print(json.dumps({
+                "action": "SKIP",
+                "symbol": symbol,
+                "reason": ["live_close_failed"],
+                "error": str(exc),
+            }, ensure_ascii=False), file=sys.stderr)
+            return None
+        if live_result.get("avg_price"):
+            signal = {**signal, "price": live_result["avg_price"]}
+        if live_result.get("executed_qty"):
+            signal = {**signal, "qty": min(float(live_result["executed_qty"]), float(position.get("qty") or 0))}
+
     position = positions.pop(symbol, None)
     order = exit_order(symbol, position, signal) if position else None
+    if order and live_result:
+        order.update(live_result)
 
     if persist:
         write_json(WATCHLIST, watch)
@@ -344,7 +417,7 @@ def current_signals(args):
     return out
 
 
-def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike_minutes, setup_only=True):
+def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike_minutes, setup_only=True, position_timeout_seconds=21600):
     watch = read_json(WATCHLIST, {})
     positions = read_json(POSITIONS, {})
     args = type("Args", (), {
@@ -360,6 +433,12 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike
     for stop_signal in stop_loss_signals(positions):
         print(json.dumps(stop_signal, ensure_ascii=False))
         execute_exit(stop_signal, watch, positions, persist=False)
+        changed = True
+    for timeout_signal in timeout_signals(positions, position_timeout_seconds):
+        if timeout_signal["symbol"] not in positions:
+            continue
+        print(json.dumps(timeout_signal, ensure_ascii=False))
+        execute_exit(timeout_signal, watch, positions, persist=False)
         changed = True
     for tp_signal in take_profit_signals(positions):
         if tp_signal["symbol"] not in positions:
@@ -413,6 +492,15 @@ def demo():
     order = execute_partial_exit({"symbol": "AAA", "price": 2.3, "qty": 5, "reasons": ["take_profit_1"]}, positions, persist=False, record_history=False)
     assert order["entry_fee"] == 0.1 and positions["AAA"]["entry_fee"] == 0.1
     assert stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 2.1}}) == []
+    original_mark_price = mark_price
+    globals()["mark_price"] = lambda symbol: 2.1
+    try:
+        timed_out = timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 10800, now=10901)
+        assert timed_out and timed_out[0]["reasons"] == ["position_timeout"]
+        assert timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 10800, now=10899) == []
+        assert timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 0, now=20000) == []
+    finally:
+        globals()["mark_price"] = original_mark_price
     print("demo ok")
 
 def main():
@@ -425,6 +513,7 @@ def main():
     p.add_argument("--max-symbols", type=int, default=int(os.getenv("MAX_SYMBOLS", "50")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
     p.add_argument("--interval", type=int, default=int(os.getenv("WATCH_SECONDS", "15")))
+    p.add_argument("--position-timeout-seconds", type=int, default=int(os.getenv("POSITION_TIMEOUT_SECONDS", "21600")))
     p.add_argument("--once", action="store_true")
     p.add_argument("--demo", action="store_true")
     args = p.parse_args()
@@ -432,7 +521,16 @@ def main():
         demo()
         return
     while True:
-        watch_once(args.level_kline, args.volume_kline, args.min_qvol, args.vol_mult, args.max_symbols, args.spike_minutes, args.setup_only)
+        watch_once(
+            args.level_kline,
+            args.volume_kline,
+            args.min_qvol,
+            args.vol_mult,
+            args.max_symbols,
+            args.spike_minutes,
+            args.setup_only,
+            args.position_timeout_seconds,
+        )
         if args.once:
             return
         time.sleep(args.interval)

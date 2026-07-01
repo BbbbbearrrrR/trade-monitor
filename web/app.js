@@ -14,8 +14,10 @@ const cls = a => `badge ${a || "HOLD"}`;
 let selectedSymbol = null;
 let chartSymbol = null;
 let lastChartAt = 0;
+let lastSignalsAt = 0;
 let lastSignals = [];
 let lastPositions = {};
+let loadInFlight = false;
 
 function signalForSymbol(symbol, signals, positions){
   if(!symbol) return null;
@@ -57,48 +59,62 @@ function eventDetail(row){
 }
 
 async function load(){
+  if(loadInFlight) return;
+  loadInFlight = true;
   document.getElementById("clock").textContent = new Date().toLocaleString();
-  const [state, signals, history] = await Promise.all([
-    fetch("/api/state").then(r=>r.json()),
-    fetch("/api/signals").then(r=>r.json()),
-    fetch("/api/history").then(r=>r.json())
-  ]);
-  lastSignals = signals;
-  lastPositions = state.positions || {};
-  const watch = Object.values(state.watchlist || {});
-  const positions = Object.entries(state.positions || {});
-  document.getElementById("watchCount").textContent = watch.length;
-  document.getElementById("openCount").textContent = signals.filter(s=>s.action==="OPEN").length;
-  document.getElementById("posCount").textContent = `${positions.length} / ${state.account?.slots ?? 10}`;
-  document.getElementById("equity").textContent = `${fmt(state.account?.equity ?? 0)} USDT`;
-  const pnl = state.account?.pnl ?? 0;
-  document.getElementById("pnl").textContent = `${pnl>=0?"+":""}${fmt(pnl)} USDT`;
-  document.getElementById("pnl").className = pnl >= 0 ? "pos" : "neg";
-  document.getElementById("signals").innerHTML = signals.map(s=>{
-    const meta = state.watchlist[s.symbol] || {};
-    const ch = meta.change24h ?? 0;
-    return `<tr data-symbol="${s.symbol}" class="${s.symbol===selectedSymbol?"selected":""}"><td>${s.symbol}</td><td class="${ch>=0?"pos":"neg"}">${fmt(ch)}%</td><td>${meta.score??""}</td><td>${fmt(s.support)}</td><td>${fmt(s.resistance)}</td><td>${fmt(s.qvol)}</td><td>${fmt(s.volume_ratio)}</td><td><span class="${cls(s.action)}">${s.action}</span></td></tr>`;
-  }).join("");
-  document.getElementById("positions").innerHTML = positions.map(([sym,p])=>{
-    const stale = p.mark == null || p.market_status !== "TRADING";
-    const mark = stale ? `<span class="warn">${p.market_status || "NO MARK"}</span>` : price(p.mark);
-    return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${price(p.entry)}</td><td>${mark}</td><td>${qty(p.qty)}</td><td>${compact(p.leverage, 2)}x</td><td>${usdt(p.margin)} USDT</td><td class="neg">${price(p.stop)}</td><td class="${(p.gross_pnl??0)>=0?"pos":"neg"}">${money(p.gross_pnl)}</td><td>${usdt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
-  }).join("");
-  document.getElementById("history").innerHTML = history.slice(0, 50).map(row=>{
-    const action = row.action === "CLOSE" ? "CLOSE" : "BUY";
-    const pnl = Number(row.gross_pnl);
-    return `<tr><td>${eventTime(row)}</td><td>${row.symbol || ""}</td><td><span class="${cls(action === "BUY" ? "OPEN" : "EXIT")}">${action}</span></td><td>${price(row.price)}</td><td>${qty(row.qty)}</td><td>${usdt(row.notional)} USDT</td><td>${usdt(eventFee(row))} USDT</td><td class="${Number.isFinite(pnl) ? (pnl >= 0 ? "pos" : "neg") : ""}">${eventDetail(row)}</td></tr>`;
-  }).join("");
-  const selected = signalForSymbol(selectedSymbol, signals, state.positions || {}) || signals[0] || (positions[0] ? {symbol: positions[0][0], action: "POSITION"} : null);
-  const nextSymbol = selected?.symbol || null;
-  const shouldDrawChart = selected && (chartSymbol !== nextSymbol || Date.now() - lastChartAt > 60000);
-  selectedSymbol = nextSymbol;
-  syncSelection();
-  bindSelectableRows();
-  if(shouldDrawChart){
-    await draw(selected, chartSymbol !== selectedSymbol);
-  }else{
-    document.getElementById("chartTitle").textContent = selected ? `Levels · ${selected.symbol} · ${selected.action}` : "Levels";
+  try{
+    const shouldRefreshSignals = !lastSignals.length || Date.now() - lastSignalsAt > 5000;
+    const requests = [
+      fetch("/api/state").then(r=>r.json()),
+      fetch("/api/history").then(r=>r.json())
+    ];
+    if(shouldRefreshSignals){
+      requests.push(fetch("/api/signals").then(r=>r.json()));
+    }
+    const [state, history, freshSignals] = await Promise.all(requests);
+    if(shouldRefreshSignals){
+      lastSignals = freshSignals;
+      lastSignalsAt = Date.now();
+    }
+    lastPositions = state.positions || {};
+    const signals = lastSignals;
+    const watch = Object.values(state.watchlist || {});
+    const positions = Object.entries(state.positions || {});
+    document.getElementById("watchCount").textContent = watch.length;
+    document.getElementById("openCount").textContent = signals.filter(s=>s.action==="OPEN").length;
+    document.getElementById("posCount").textContent = `${positions.length} / ${state.account?.slots ?? 10}`;
+    document.getElementById("equity").textContent = `${fmt(state.account?.equity ?? 0)} USDT`;
+    const pnl = state.account?.pnl ?? 0;
+    document.getElementById("pnl").textContent = `${pnl>=0?"+":""}${fmt(pnl)} USDT`;
+    document.getElementById("pnl").className = pnl >= 0 ? "pos" : "neg";
+    document.getElementById("signals").innerHTML = signals.map(s=>{
+      const meta = state.watchlist[s.symbol] || {};
+      const ch = meta.change24h ?? 0;
+      return `<tr data-symbol="${s.symbol}" class="${s.symbol===selectedSymbol?"selected":""}"><td>${s.symbol}</td><td class="${ch>=0?"pos":"neg"}">${fmt(ch)}%</td><td>${meta.score??""}</td><td>${fmt(s.support)}</td><td>${fmt(s.resistance)}</td><td>${fmt(s.qvol)}</td><td>${fmt(s.volume_ratio)}</td><td><span class="${cls(s.action)}">${s.action}</span></td></tr>`;
+    }).join("");
+    document.getElementById("positions").innerHTML = positions.map(([sym,p])=>{
+      const stale = p.mark == null || p.market_status !== "TRADING";
+      const mark = stale ? `<span class="warn">${p.market_status || "NO MARK"}</span>` : price(p.mark);
+      return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${price(p.entry)}</td><td>${mark}</td><td>${qty(p.qty)}</td><td>${compact(p.leverage, 2)}x</td><td>${usdt(p.margin)} USDT</td><td class="neg">${price(p.stop)}</td><td class="${(p.gross_pnl??0)>=0?"pos":"neg"}">${money(p.gross_pnl)}</td><td>${usdt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
+    }).join("");
+    document.getElementById("history").innerHTML = history.slice(0, 50).map(row=>{
+      const action = row.action === "CLOSE" ? "CLOSE" : "BUY";
+      const pnl = Number(row.gross_pnl);
+      return `<tr><td>${eventTime(row)}</td><td>${row.symbol || ""}</td><td><span class="${cls(action === "BUY" ? "OPEN" : "EXIT")}">${action}</span></td><td>${price(row.price)}</td><td>${qty(row.qty)}</td><td>${usdt(row.notional)} USDT</td><td>${usdt(eventFee(row))} USDT</td><td class="${Number.isFinite(pnl) ? (pnl >= 0 ? "pos" : "neg") : ""}">${eventDetail(row)}</td></tr>`;
+    }).join("");
+    const selected = signalForSymbol(selectedSymbol, signals, state.positions || {}) || signals[0] || (positions[0] ? {symbol: positions[0][0], action: "POSITION"} : null);
+    const nextSymbol = selected?.symbol || null;
+    const shouldDrawChart = selected && (chartSymbol !== nextSymbol || Date.now() - lastChartAt > 60000);
+    selectedSymbol = nextSymbol;
+    syncSelection();
+    bindSelectableRows();
+    if(shouldDrawChart){
+      await draw(selected, chartSymbol !== selectedSymbol);
+    }else{
+      document.getElementById("chartTitle").textContent = selected ? `Levels · ${selected.symbol} · ${selected.action}` : "Levels";
+    }
+  }finally{
+    loadInFlight = false;
   }
 }
 
@@ -164,4 +180,4 @@ function renderCandles(box, data, signal){
   box.innerHTML = `<svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" role="img" aria-label="${data.symbol} 5 minute candlestick chart">${grid}<line x1="${pad.l}" y1="${pad.t}" x2="${pad.l}" y2="${h-pad.b}" class="axisLine"/><line x1="${pad.l}" y1="${h-pad.b}" x2="${w-pad.r}" y2="${h-pad.b}" class="axisLine"/>${candles}${line(data.levels?.support ?? signal.support, "Support", "supportLine")}${line(data.levels?.resistance ?? signal.resistance, "Resistance", "resistanceLine")}<text x="${pad.l}" y="${h-10}" class="axisText">${first}</text><text x="${w-pad.r-44}" y="${h-10}" class="axisText">${last}</text></svg>`;
 }
 
-load(); setInterval(load, 15000);
+load(); setInterval(load, 1000);

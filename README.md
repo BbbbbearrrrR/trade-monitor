@@ -2,7 +2,7 @@
 
 Binance USDT-M perpetual futures market monitor with a small dashboard, scanner, signal watcher, and paper-position allocator.
 
-This project is for monitoring and paper trading only. It reads public Binance Futures market data and writes local JSON state files. It does not place real exchange orders.
+This project is for monitoring and paper trading by default. It reads public Binance Futures market data and writes local JSON state files. Real Binance USD-M Futures orders are only sent when live trading is explicitly enabled.
 
 ## Features
 
@@ -14,14 +14,17 @@ This project is for monitoring and paper trading only. It reads public Binance F
 - Tracks paper positions and estimated fees/PnL in `positions.json`.
 - Records paper order history in `trade_history.json`.
 - Serves a local dashboard with watchlist signals, open positions, and candlestick levels.
+- Can optionally route entries/exits to Binance USD-M Futures when `TRADE_MODE=live` is explicitly enabled.
 
 ## Strategy Summary
 
 Scanner defaults:
 
 - 24h change between `10%` and `30%`
-- minimum score `70`
+- minimum score `60`
 - top `30` perpetual futures gainers by quote volume
+
+Scanner score emphasizes 24h quote-volume growth and 24h gain quality. Quote-volume growth versus the previous 24h window contributes up to `45` points, 24h gain contributes up to `35`, 24h liquidity contributes up to `10`, and a green 24h candle adds `10`; moves above `25%` receive an extension penalty.
 
 Signal defaults:
 
@@ -43,10 +46,11 @@ An `OPEN` signal requires both:
 Each paper position targets:
 
 ```text
-notional = EQUITY / slots
+current equity = EQUITY + realized PnL + unrealized PnL
+notional = current equity / slots
 ```
 
-With the defaults, that is `1000 / 10 = 100 USDT` notional per position.
+Before any PnL, the defaults are `1000 / 10 = 100 USDT` notional per position. As paper PnL changes, new positions resize from current account equity.
 
 The strategy tracks local margin usage as:
 
@@ -56,6 +60,35 @@ used cash = margin + entry fee
 ```
 
 New positions start with `LEVERAGE=1`. If available paper cash is not enough, the strategy doubles leverage step-by-step (`1x -> 2x -> 4x -> 8x`) until the required margin fits or `MAX_LEVERAGE` is reached. If even `MAX_LEVERAGE` is not enough, the signal is skipped.
+
+## Live Trading
+
+Default mode is always paper:
+
+```text
+TRADE_MODE=paper
+```
+
+Live trading requires all of the following:
+
+```text
+TRADE_MODE=live
+LIVE_TRADING_CONFIRM=YES
+BINANCE_API_KEY=...
+BINANCE_API_SECRET=...
+```
+
+Optional live-trading guardrails:
+
+| Variable | Description |
+| --- | --- |
+| `MAX_LIVE_NOTIONAL` | Reject any live entry above this USDT notional |
+| `LIVE_SYMBOLS` | Comma-separated symbol allowlist, for example `BTCUSDT,ETHUSDT` |
+| `BINANCE_FUTURES_API_BASE` | API base, defaults to `https://fapi.binance.com` |
+
+Live entries use Binance USD-M Futures market `BUY` orders. Live exits use reduce-only market `SELL` orders so stop-loss, structure exits, and take-profit exits do not open a reverse short. Quantity is rounded down to Binance symbol filters before submission.
+
+Keep API keys out of git. Use keys with no withdrawal permission, add IP restrictions where possible, and start with small `MAX_LIVE_NOTIONAL` while validating behavior.
 
 ## Dashboard
 
@@ -112,19 +145,25 @@ Common variables:
 | `SPIKE_MINUTES` | `3` | Recent volume window size |
 | `MAX_SYMBOLS` | `50` | Maximum watchlist rows to evaluate |
 | `SETUP_ONLY` | `1` | Only process rows marked as setup |
+| `STRATEGY_SECONDS` | `1` | Strategy loop interval |
+| `WATCH_SECONDS` | `5` | Watcher loop interval |
+| `POSITION_TIMEOUT_SECONDS` | `21600` | Close positions after this many seconds; default is 6 hours, `0` disables |
 | `LEVERAGE` | `1` | Starting leverage for new paper positions |
 | `MAX_LEVERAGE` | `8` | Maximum auto-escalated leverage when paper cash is insufficient |
+| `TRADE_MODE` | `paper` | `paper` keeps local simulated orders; `live` sends Binance Futures orders |
 
 Scanner variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SCAN_THRESHOLD` | `70` | Minimum scanner score |
+| `SCAN_THRESHOLD` | `60` | Minimum scanner score |
 | `SCAN_LIMIT` | `30` | Number of top gainers considered |
 | `MIN_CHANGE` | `10` | Minimum 24h percent change |
 | `MAX_CHANGE` | `30` | Maximum 24h percent change |
 | `MIN_DELIVERY_DAYS` | `7` | Exclude contracts whose `deliveryDate` is within this many days |
-| `SCAN_SECONDS` | `600` | Scanner refresh interval |
+| `SCAN_VOLUME_KLINE` | `1h` | Candle interval used to compare recent and prior quote volume |
+| `SCAN_VOLUME_HOURS` | `24` | Number of hours in each quote-volume comparison window |
+| `SCAN_SECONDS` | `300` | Scanner refresh interval |
 
 ## Local Commands
 

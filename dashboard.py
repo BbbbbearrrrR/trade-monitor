@@ -129,6 +129,33 @@ def enrich_positions(positions, default_fee_bps):
     return out, total_pnl, total_fee
 
 
+def apply_exit_signals(signals):
+    watch = watcher.read_json(watcher.WATCHLIST, {})
+    positions = watcher.read_json(watcher.POSITIONS, {})
+    visible = []
+    changed = False
+    for signal in signals:
+        if signal.get("action") != "EXIT":
+            visible.append(signal)
+            continue
+        symbol = signal.get("symbol")
+        if not symbol:
+            continue
+        if symbol in positions:
+            order = watcher.execute_exit(signal, watch, positions, persist=False)
+            if order:
+                changed = True
+            else:
+                visible.append(signal)
+        elif symbol in watch:
+            watch.pop(symbol, None)
+            changed = True
+    if changed:
+        watcher.write_json(watcher.WATCHLIST, watch)
+        watcher.write_json(watcher.POSITIONS, positions)
+    return visible
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "web"), **kwargs)
@@ -181,7 +208,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "spike_minutes": int(os.getenv("SPIKE_MINUTES", "3")),
                 "setup_only": os.getenv("SETUP_ONLY", "1") != "0",
             })()
-            return self.json(strategy.current_signals(args))
+            return self.json(apply_exit_signals(strategy.current_signals(args)))
         if path == "/api/klines":
             query = dict(__import__("urllib.parse").parse.parse_qsl(parsed.query))
             symbol = (query.get("symbol") or "BTCUSDT").upper()
