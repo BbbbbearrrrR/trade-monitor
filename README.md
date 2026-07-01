@@ -38,6 +38,25 @@ An `OPEN` signal requires both:
 - latest volume candle close above resistance
 - recent quote volume greater than the higher of the minimum quote-volume threshold or `VOL_MULT` times the expected recent volume
 
+## Strategy Sizing
+
+Each paper position targets:
+
+```text
+notional = EQUITY / slots
+```
+
+With the defaults, that is `1000 / 8 = 125 USDT` notional per position.
+
+The strategy tracks local margin usage as:
+
+```text
+margin = notional / leverage
+used cash = margin + entry fee
+```
+
+New positions start with `LEVERAGE=1`. If available paper cash is not enough, the strategy doubles leverage step-by-step (`1x -> 2x -> 4x -> 8x`) until the required margin fits or `MAX_LEVERAGE` is reached. If even `MAX_LEVERAGE` is not enough, the signal is skipped.
+
 ## Dashboard
 
 The dashboard runs on port `5050`.
@@ -92,6 +111,8 @@ Common variables:
 | `SPIKE_MINUTES` | `3` | Recent volume window size |
 | `MAX_SYMBOLS` | `50` | Maximum watchlist rows to evaluate |
 | `SETUP_ONLY` | `1` | Only process rows marked as setup |
+| `LEVERAGE` | `1` | Starting leverage for new paper positions |
+| `MAX_LEVERAGE` | `8` | Maximum auto-escalated leverage when paper cash is insufficient |
 
 Scanner variables:
 

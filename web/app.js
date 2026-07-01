@@ -82,7 +82,7 @@ async function load(){
   document.getElementById("positions").innerHTML = positions.map(([sym,p])=>{
     const stale = p.mark == null || p.market_status !== "TRADING";
     const mark = stale ? `<span class="warn">${p.market_status || "NO MARK"}</span>` : price(p.mark);
-    return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${price(p.entry)}</td><td>${mark}</td><td>${qty(p.qty)}</td><td class="neg">${price(p.stop)}</td><td class="${(p.gross_pnl??0)>=0?"pos":"neg"}">${money(p.gross_pnl)}</td><td>${usdt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
+    return `<tr data-symbol="${sym}" class="${sym===selectedSymbol?"selected":""} ${stale?"stale":""}" title="${p.mark_error || ""}"><td>${sym}</td><td>${price(p.entry)}</td><td>${mark}</td><td>${qty(p.qty)}</td><td>${compact(p.leverage, 2)}x</td><td>${usdt(p.margin)} USDT</td><td class="neg">${price(p.stop)}</td><td class="${(p.gross_pnl??0)>=0?"pos":"neg"}">${money(p.gross_pnl)}</td><td>${usdt(p.fee)} USDT</td><td class="${(p.pnl??0)>=0?"pos":"neg"}">${money(p.pnl)}</td></tr>`;
   }).join("");
   document.getElementById("history").innerHTML = history.slice(0, 50).map(row=>{
     const action = row.action === "CLOSE" ? "CLOSE" : "BUY";

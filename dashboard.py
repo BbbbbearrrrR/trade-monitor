@@ -36,8 +36,10 @@ def trade_history(positions):
                 "price": p.get("entry"),
                 "qty": p.get("qty"),
                 "notional": p.get("notional"),
+                "margin": p.get("margin"),
                 "entry_fee": p.get("entry_fee"),
                 "fee_bps": p.get("fee_bps"),
+                "leverage": p.get("leverage"),
                 "stop": p.get("stop"),
                 "opened_at": opened_at,
                 "reason": ["current_position"],
@@ -62,6 +64,8 @@ def enrich_positions(positions, default_fee_bps):
         qty = float(p.get("qty") or 0)
         fee_bps = float(p.get("fee_bps", default_fee_bps) or 0)
         entry_notional = float(p.get("notional") or (entry * qty))
+        leverage = max(1.0, float(p.get("leverage") or 1))
+        margin = float(p.get("margin") or (entry_notional / leverage if leverage else entry_notional))
         entry_fee = float(p.get("entry_fee") or fee_usdt(entry_notional, fee_bps))
         if price is None:
             exit_fee = None
@@ -82,6 +86,8 @@ def enrich_positions(positions, default_fee_bps):
             "market_status": market_status,
             "mark_error": mark_error,
             "notional": round(entry_notional, 8),
+            "margin": round(margin, 8),
+            "leverage": int(leverage) if leverage.is_integer() else leverage,
             "gross_pnl": gross_pnl,
             "entry_fee": entry_fee,
             "exit_fee": exit_fee,

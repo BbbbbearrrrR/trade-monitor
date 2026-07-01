@@ -28,6 +28,8 @@ services:
       MAX_SYMBOLS: ${MAX_SYMBOLS:-50}
       SETUP_ONLY: ${SETUP_ONLY:-1}
       STRATEGY_SECONDS: ${STRATEGY_SECONDS:-5}
+      LEVERAGE: ${LEVERAGE:-1}
+      MAX_LEVERAGE: ${MAX_LEVERAGE:-8}
     volumes:
       - .:/app
   watcher:
