@@ -48,6 +48,33 @@ def trade_history(positions):
     return sorted(history, key=lambda row: row.get("closed_at") or row.get("opened_at") or 0, reverse=True)
 
 
+def realized_totals(history, default_fee_bps):
+    opens = {}
+    realized_pnl = 0
+    realized_fee = 0
+    for row in sorted(history, key=lambda item: item.get("closed_at") or item.get("opened_at") or 0):
+        symbol = row.get("symbol")
+        action = row.get("action")
+        if action in ("BUY", "OPEN") and symbol:
+            opens.setdefault(symbol, []).append(row)
+            continue
+        if action != "CLOSE":
+            continue
+
+        fee_bps = float(row.get("fee_bps", default_fee_bps) or 0)
+        exit_notional = float(row.get("notional") or 0)
+        exit_fee = float(row.get("exit_fee") or fee_usdt(exit_notional, fee_bps))
+        entry_fee = float(row.get("entry_fee") or 0)
+        if not entry_fee and symbol and opens.get(symbol):
+            entry_fee = float(opens[symbol].pop(0).get("entry_fee") or 0)
+
+        fee = float(row.get("fee") or (entry_fee + exit_fee))
+        gross_pnl = float(row.get("gross_pnl") or 0)
+        realized_fee += fee
+        realized_pnl += gross_pnl - fee
+    return realized_pnl, realized_fee
+
+
 def enrich_positions(positions, default_fee_bps):
     out = {}
     total_pnl = 0
@@ -117,12 +144,25 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/state":
             fee_bps = float(os.getenv("FEE_BPS", "10"))
             raw_positions = read_json("positions.json", {})
-            positions, pnl, fees = enrich_positions(raw_positions, fee_bps)
+            positions, unrealized_pnl, unrealized_fees = enrich_positions(raw_positions, fee_bps)
+            realized_pnl, realized_fees = realized_totals(read_json("trade_history.json", []), fee_bps)
+            pnl = realized_pnl + unrealized_pnl
+            fees = realized_fees + unrealized_fees
             equity = float(os.getenv("EQUITY", "1000"))
             return self.json({
                 "watchlist": read_json("watchlist.json", {}),
                 "positions": positions,
-                "account": {"initial": equity, "pnl": pnl, "fees": fees, "fee_bps": fee_bps, "equity": equity + pnl},
+                "account": {
+                    "initial": equity,
+                    "pnl": pnl,
+                    "realized_pnl": realized_pnl,
+                    "unrealized_pnl": unrealized_pnl,
+                    "fees": fees,
+                    "realized_fees": realized_fees,
+                    "unrealized_fees": unrealized_fees,
+                    "fee_bps": fee_bps,
+                    "equity": equity + pnl,
+                },
             })
         if path == "/api/history":
             return self.json(trade_history(read_json("positions.json", {})))
