@@ -196,4 +196,4 @@ function renderCandles(box, data, signal){
 loadFast();
 loadSignals();
 setInterval(loadFast, 1000);
-setInterval(loadSignals, 5000);
+setInterval(loadSignals, 1000);
