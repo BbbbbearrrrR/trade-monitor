@@ -20,6 +20,11 @@ def fee_usdt(notional, fee_bps):
     return round(float(notional) * float(fee_bps) / 10000.0, 8)
 
 
+def mark_prices():
+    rows = watcher.get_json("/fapi/v1/ticker/price")
+    return {row["symbol"]: float(row["price"]) for row in rows if row.get("symbol") and row.get("price")}
+
+
 def trade_history(positions):
     history = read_json("trade_history.json", [])
     seen_opens = {
@@ -82,14 +87,19 @@ def enrich_positions(positions, default_fee_bps):
     out = {}
     total_pnl = 0
     total_fee = 0
+    prices = {}
+    prices_error = None
+    try:
+        prices = mark_prices()
+    except Exception as exc:
+        prices_error = str(exc)
     for symbol, p in positions.items():
         market_status = watcher.symbol_status(symbol)
         mark_error = None
-        try:
-            price = watcher.mark_price(symbol)
-        except Exception as exc:
+        price = prices.get(symbol)
+        if price is None:
             price = None
-            mark_error = str(exc)
+            mark_error = prices_error or f"{symbol} has no futures ticker price; status={market_status}"
         entry = float(p.get("entry") or 0)
         qty = float(p.get("qty") or 0)
         fee_bps = float(p.get("fee_bps", default_fee_bps) or 0)
