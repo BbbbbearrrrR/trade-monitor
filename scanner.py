@@ -8,7 +8,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-API = "https://api.binance.com"
+API = "https://fapi.binance.com"
 WATCHLIST = Path("watchlist.json")
 
 
@@ -37,8 +37,14 @@ def write_json(path, value):
 
 
 def tickers():
-    active = {s["symbol"] for s in get_json("/api/v3/exchangeInfo")["symbols"] if s.get("status") == "TRADING"}
-    return [t for t in get_json("/api/v3/ticker/24hr") if t["symbol"] in active and t["symbol"].endswith("USDT")]
+    active = {
+        s["symbol"]
+        for s in get_json("/fapi/v1/exchangeInfo")["symbols"]
+        if s.get("status") == "TRADING"
+        and s.get("contractType") == "PERPETUAL"
+        and s.get("quoteAsset") == "USDT"
+    }
+    return [t for t in get_json("/fapi/v1/ticker/24hr") if t["symbol"] in active]
 
 
 def score(t, min_change, max_change):
@@ -65,7 +71,7 @@ def add(watch, t, score_value, reasons):
     if symbol in watch:
         return None
     row = {
-        "venue": "binance_spot",
+        "venue": "binance_usdt_perpetual",
         "symbol": symbol,
         "action": "SETUP",
         "setup": True,
@@ -82,6 +88,23 @@ def add(watch, t, score_value, reasons):
     return row
 
 
+def refresh(row, t, score_value, reasons):
+    row.update({
+        "venue": "binance_usdt_perpetual",
+        "symbol": t["symbol"],
+        "action": "SETUP",
+        "setup": True,
+        "score": score_value,
+        "reasons": reasons,
+        "price": float(t["lastPrice"]),
+        "change24h": float(t["priceChangePercent"]),
+        "quoteVolume24h": float(t["quoteVolume"]),
+        "trades24h": int(t.get("count") or 0),
+    })
+    row.setdefault("added_at", int(time.time()))
+    return row
+
+
 def scan(threshold, limit, min_change, max_change):
     watch = read_json(WATCHLIST, {})
     added = []
@@ -93,10 +116,8 @@ def scan(threshold, limit, min_change, max_change):
         points, reasons = score(t, min_change, max_change)
         if points < threshold:
             continue
-        row = watch.get(t["symbol"]) or add(next_watch, t, points, reasons)
+        row = refresh(watch[t["symbol"]], t, points, reasons) if t["symbol"] in watch else add(next_watch, t, points, reasons)
         if row:
-            row.setdefault("action", "SETUP")
-            row.setdefault("setup", True)
             next_watch[t["symbol"]] = row
             added.append(row)
 
@@ -117,7 +138,7 @@ def demo():
 
 
 def main():
-    p = argparse.ArgumentParser(description="Add Binance USDT 24h gainers to watchlist.json.")
+    p = argparse.ArgumentParser(description="Add Binance USDT perpetual 24h gainers to watchlist.json.")
     p.add_argument("--threshold", type=int, default=int(os.getenv("SCAN_THRESHOLD", "70")))
     p.add_argument("--limit", type=int, default=int(os.getenv("SCAN_LIMIT", "30")))
     p.add_argument("--min-change", type=float, default=float(os.getenv("MIN_CHANGE", "10")))

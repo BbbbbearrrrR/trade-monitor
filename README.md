@@ -1,12 +1,12 @@
 # Trade Monitor
 
-Binance USDT market monitor with a small dashboard, scanner, signal watcher, and paper-position allocator.
+Binance USDT-M perpetual futures market monitor with a small dashboard, scanner, signal watcher, and paper-position allocator.
 
-This project is for monitoring and paper trading only. It reads public Binance market data and writes local JSON state files. It does not place real exchange orders.
+This project is for monitoring and paper trading only. It reads public Binance Futures market data and writes local JSON state files. It does not place real exchange orders.
 
 ## Features
 
-- Scans Binance USDT spot pairs for 24h gainers.
+- Scans Binance USDT-M perpetual futures contracts for 24h gainers.
 - Scores candidates by 24h move, liquidity, trade count, and green daily candle.
 - Tracks setup candidates in `watchlist.json`.
 - Calculates support and resistance from recent candle structure.
@@ -20,7 +20,7 @@ Scanner defaults:
 
 - 24h change between `10%` and `30%`
 - minimum score `70`
-- top `30` gainers by quote volume
+- top `30` perpetual futures gainers by quote volume
 
 Signal defaults:
 
@@ -71,7 +71,7 @@ docker compose down
 
 ## Services
 
-- `scanner`: refreshes `watchlist.json` from Binance 24h ticker data
+- `scanner`: refreshes `watchlist.json` from Binance USDT-M perpetual futures 24h ticker data
 - `watcher`: prints current setup/exit signals and removes broken setups
 - `strategy`: converts `OPEN` signals into paper positions
 - `dashboard`: serves the web UI and JSON APIs
@@ -137,3 +137,15 @@ These files are generated locally and intentionally ignored by git:
 - `charts/`
 
 They contain runtime state, generated output, or machine-local process data.
+
+## Binance Data Source
+
+The runtime data source is Binance USDT-M Futures:
+
+- base URL: `https://fapi.binance.com`
+- exchange info: `/fapi/v1/exchangeInfo`
+- 24h tickers: `/fapi/v1/ticker/24hr`
+- candles: `/fapi/v1/klines`
+- mark reference used by the dashboard: `/fapi/v1/ticker/price`
+
+The scanner filters for `contractType = PERPETUAL`, `status = TRADING`, and `quoteAsset = USDT`.

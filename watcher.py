@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-API = "https://api.binance.com"
+API = "https://fapi.binance.com"
 WATCHLIST = Path("watchlist.json")
 POSITIONS = Path("positions.json")
 
@@ -39,12 +39,12 @@ def write_json(path, value):
 
 
 def bars(symbol, interval, limit):
-    rows = get_json("/api/v3/klines", {"symbol": symbol, "interval": interval, "limit": limit})
+    rows = get_json("/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit})
     return [{"t": int(r[0] / 1000), "o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4]), "vol": float(r[5]), "qvol": float(r[7]), "trades": int(r[8])} for r in rows]
 
 
 def mark_price(symbol):
-    return float(get_json("/api/v3/ticker/price", {"symbol": symbol})["price"])
+    return float(get_json("/fapi/v1/ticker/price", {"symbol": symbol})["price"])
 
 
 def exit_order(symbol, position, signal):
