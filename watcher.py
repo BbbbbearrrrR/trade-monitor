@@ -336,7 +336,7 @@ def interval_minutes(interval):
     raise ValueError(f"unsupported interval: {interval}")
 
 
-def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_kline):
+def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_kline, breakout_buffer_pct=0.0):
     kline_minutes = interval_minutes(volume_kline)
     spike_bars = max(1, int(round(spike_minutes / kline_minutes)))
     prev_bars = 20
@@ -354,7 +354,8 @@ def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_
     volume_ratio = recent_qvol / expected_qvol if expected_qvol else 0
 
     resistance = levels.get("resistance")
-    broke_resistance = bool(resistance and last["c"] > resistance)
+    breakout_price = resistance * (1 + breakout_buffer_pct / 100.0) if resistance else None
+    broke_resistance = bool(breakout_price and last["c"] > breakout_price)
 
     if levels.get("support") and last["c"] < levels["support"]:
         return "EXIT", ["structure_break"], volume_ratio, recent_qvol
@@ -367,14 +368,14 @@ def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_
     return "SETUP", ["setup", "waiting_breakout", "waiting_volume"], volume_ratio, recent_qvol
 
 
-def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True):
+def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, breakout_buffer_pct=0.2):
     if setup_only and not is_setup(row):
         return None
     level_rows = bars(symbol, level_kline, 16)
     spike_bars = max(1, int(round(spike_minutes / interval_minutes(volume_kline))))
     volume_rows = bars(symbol, volume_kline, 20 + spike_bars)
     levels = structure(level_rows[:-1])
-    action, reasons, volume_ratio, recent_qvol = volume_spike_signal(levels, volume_rows, min_qvol, vol_mult, spike_minutes, volume_kline)
+    action, reasons, volume_ratio, recent_qvol = volume_spike_signal(levels, volume_rows, min_qvol, vol_mult, spike_minutes, volume_kline, breakout_buffer_pct)
     last = volume_rows[-1]
     breakout_pct = (last["c"] / levels["resistance"] - 1) * 100 if levels["resistance"] else 0
     return {
@@ -384,6 +385,7 @@ def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, s
         "support": levels["support"],
         "resistance": levels["resistance"],
         "breakout_pct": round(breakout_pct, 2),
+        "breakout_buffer_pct": breakout_buffer_pct,
         "qvol": round(recent_qvol) if recent_qvol is not None else None,
         "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
         "volume_window_minutes": spike_bars * interval_minutes(volume_kline),
@@ -407,6 +409,7 @@ def current_signals(args):
                 args.vol_mult,
                 args.spike_minutes,
                 args.setup_only,
+                getattr(args, "breakout_buffer_pct", 0.2),
             )
         except (OSError, urllib.error.URLError) as e:
             print(f"skip {symbol}: {e}", file=sys.stderr)
@@ -417,7 +420,7 @@ def current_signals(args):
     return out
 
 
-def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike_minutes, setup_only=True, position_timeout_seconds=21600):
+def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike_minutes, setup_only=True, position_timeout_seconds=21600, breakout_buffer_pct=0.2):
     watch = read_json(WATCHLIST, {})
     positions = read_json(POSITIONS, {})
     args = type("Args", (), {
@@ -428,6 +431,7 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike
         "max_symbols": max_symbols,
         "spike_minutes": spike_minutes,
         "setup_only": setup_only,
+        "breakout_buffer_pct": breakout_buffer_pct,
     })()
     changed = False
     for stop_signal in stop_loss_signals(positions):
@@ -472,8 +476,11 @@ def demo():
 
     rows1m = [{"t": i, "o": 1.36, "h": 1.38, "l": 1.35, "c": 1.36, "vol": 1, "qvol": 1000, "trades": 10} for i in range(20)]
     rows1m += [{"t": 21 + i, "o": 1.36, "h": 1.45, "l": 1.35, "c": 1.43, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
-    action, reasons, ratio, recent_qvol = volume_spike_signal(structure(rows15), rows1m, 1000, 3, 3, "1m")
+    action, reasons, ratio, recent_qvol = volume_spike_signal(structure(rows15), rows1m, 1000, 3, 3, "1m", 0.2)
     assert action == "OPEN" and "resistance_break" in reasons and "3m_volume_spike" in reasons and ratio == 3.5 and recent_qvol == 10500
+    touch_rows = rows1m[:-3] + [{"t": 21 + i, "o": 1.36, "h": 1.43, "l": 1.35, "c": 1.421, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
+    action, reasons, _, _ = volume_spike_signal(structure(rows15), touch_rows, 1000, 3, 3, "1m", 0.2)
+    assert action == "SETUP" and "waiting_breakout" in reasons
     no_break_rows = rows1m[:-3] + [{"t": 21 + i, "o": 1.36, "h": 1.39, "l": 1.35, "c": 1.38, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
     action, reasons, _, _ = volume_spike_signal(structure(rows15), no_break_rows, 1000, 3, 3, "1m")
     assert action == "SETUP" and "waiting_breakout" in reasons
@@ -510,6 +517,7 @@ def main():
     p.add_argument("--min-qvol", type=float, default=float(os.getenv("MIN_QVOL", "50000")))
     p.add_argument("--vol-mult", type=float, default=float(os.getenv("VOL_MULT", "2")))
     p.add_argument("--spike-minutes", type=int, default=int(os.getenv("SPIKE_MINUTES", "3")))
+    p.add_argument("--breakout-buffer-pct", type=float, default=float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")))
     p.add_argument("--max-symbols", type=int, default=int(os.getenv("MAX_SYMBOLS", "50")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
     p.add_argument("--interval", type=int, default=int(os.getenv("WATCH_SECONDS", "15")))
@@ -530,6 +538,7 @@ def main():
             args.spike_minutes,
             args.setup_only,
             args.position_timeout_seconds,
+            args.breakout_buffer_pct,
         )
         if args.once:
             return

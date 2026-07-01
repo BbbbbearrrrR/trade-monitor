@@ -38,7 +38,7 @@ Support and resistance are calculated from the latest 15 completed structure can
 
 An `OPEN` signal requires both:
 
-- latest volume candle close above resistance
+- latest volume candle close above resistance plus `BREAKOUT_BUFFER_PCT`
 - recent quote volume greater than the higher of the minimum quote-volume threshold or `VOL_MULT` times the expected recent volume
 
 ## Strategy Sizing
@@ -143,6 +143,7 @@ Common variables:
 | `MIN_QVOL` | `50000` | 15-minute quote-volume floor used by the spike threshold |
 | `VOL_MULT` | `2` | Recent volume multiplier versus prior average |
 | `SPIKE_MINUTES` | `3` | Recent volume window size |
+| `BREAKOUT_BUFFER_PCT` | `0.2` | Required close above resistance before treating it as a breakout |
 | `MAX_SYMBOLS` | `50` | Maximum watchlist rows to evaluate |
 | `SETUP_ONLY` | `1` | Only process rows marked as setup |
 | `STRATEGY_SECONDS` | `1` | Strategy loop interval |

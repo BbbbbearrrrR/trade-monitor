@@ -216,6 +216,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "min_qvol": float(os.getenv("MIN_QVOL", "50000")),
                 "vol_mult": float(os.getenv("VOL_MULT", "2")),
                 "spike_minutes": int(os.getenv("SPIKE_MINUTES", "3")),
+                "breakout_buffer_pct": float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")),
                 "setup_only": os.getenv("SETUP_ONLY", "1") != "0",
             })()
             return self.json(apply_exit_signals(strategy.current_signals(args)))
