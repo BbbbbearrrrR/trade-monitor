@@ -25,7 +25,7 @@ services:
       - .:/app
   strategy:
     build: .
-    command: python strategy.py --watch --equity ${EQUITY:-10000} --slots ${SLOTS:-10} --fee-bps ${FEE_BPS:-10}
+    command: python strategy.py --watch --equity ${EQUITY:-10000} --slots ${SLOTS:-10} --margin-pct ${MARGIN_PCT:-5} --fee-bps ${FEE_BPS:-10}
     environment:
       LEVEL_KLINE: ${LEVEL_KLINE:-15m}
       VOLUME_KLINE: ${VOLUME_KLINE:-1m}
@@ -36,8 +36,9 @@ services:
       SETUP_ONLY: ${SETUP_ONLY:-1}
       STRATEGY_SECONDS: ${STRATEGY_SECONDS:-1}
       SLOTS: ${SLOTS:-10}
-      LEVERAGE: ${LEVERAGE:-1}
-      MAX_LEVERAGE: ${MAX_LEVERAGE:-8}
+      MARGIN_PCT: ${MARGIN_PCT:-5}
+      LEVERAGE: ${LEVERAGE:-2}
+      MAX_LEVERAGE: ${MAX_LEVERAGE:-2}
       TRADE_MODE: ${TRADE_MODE:-paper}
       LIVE_TRADING_CONFIRM: ${LIVE_TRADING_CONFIRM:-}
       MAX_LIVE_NOTIONAL: ${MAX_LIVE_NOTIONAL:-}

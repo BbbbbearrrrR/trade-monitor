@@ -45,10 +45,11 @@ Each paper position targets:
 
 ```text
 current equity = EQUITY + realized PnL + unrealized PnL
-notional = current equity / slots
+margin = current equity * MARGIN_PCT / 100
+notional = margin * LEVERAGE
 ```
 
-Before any PnL, the defaults are `10000 / 10 = 1000 USDT` notional per position. As paper PnL changes, new positions resize from current account equity.
+Before any PnL, the defaults are `10000 * 5% * 2 = 1000 USDT` notional per position with `500 USDT` margin. As paper PnL changes, new positions resize from current account equity.
 
 The strategy tracks local margin usage as:
 
@@ -57,7 +58,7 @@ margin = notional / leverage
 used cash = margin + entry fee
 ```
 
-New positions start with `LEVERAGE=1`. If available paper cash is not enough, the strategy doubles leverage step-by-step (`1x -> 2x -> 4x -> 8x`) until the required margin fits or `MAX_LEVERAGE` is reached. If even `MAX_LEVERAGE` is not enough, the signal is skipped.
+New positions start with `LEVERAGE=2`. By default `MAX_LEVERAGE=2`, so paper sizing stays at 5% margin and 2x leverage unless you explicitly raise `MAX_LEVERAGE`.
 
 ## Live Trading
 
@@ -134,7 +135,8 @@ Common variables:
 | Variable | Default | Description |
 | --- | --- | --- |
 | `EQUITY` | `10000` | Paper account equity used for sizing |
-| `SLOTS` | `10` | Maximum number of paper positions and sizing divisor |
+| `SLOTS` | `10` | Maximum number of paper positions |
+| `MARGIN_PCT` | `5` | Margin percentage of current equity allocated to each new position |
 | `FEE_BPS` | `10` | Fee estimate in basis points |
 | `LEVEL_KLINE` | `15m` | Strategy support/resistance candle interval |
 | `VOLUME_KLINE` | `1m` | Volume spike candle interval |
@@ -146,8 +148,8 @@ Common variables:
 | `STRATEGY_SECONDS` | `1` | Strategy loop interval |
 | `WATCH_SECONDS` | `5` | Watcher loop interval |
 | `POSITION_TIMEOUT_SECONDS` | `3600` | Close positions after this many seconds; default is 1 hour, `0` disables |
-| `LEVERAGE` | `1` | Starting leverage for new paper positions |
-| `MAX_LEVERAGE` | `8` | Maximum auto-escalated leverage when paper cash is insufficient |
+| `LEVERAGE` | `2` | Leverage for new paper/live positions |
+| `MAX_LEVERAGE` | `2` | Maximum auto-escalated leverage when paper cash is insufficient |
 | `TRADE_MODE` | `paper` | `paper` keeps local simulated orders; `live` sends Binance Futures orders |
 
 Scanner variables:

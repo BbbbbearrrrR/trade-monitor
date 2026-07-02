@@ -87,11 +87,13 @@ def choose_leverage(notional, fee, available_cash, base_leverage, max_leverage):
     return None, None
 
 
-def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, base_leverage=1, max_leverage=8):
+def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, base_leverage=2, max_leverage=2, margin_pct=5):
     open_slots = max(0, slots - len(positions or {}))
     if open_slots <= 0:
         return []
-    target_notional = round(equity / slots, 2)
+    base_leverage = max(1.0, float(base_leverage))
+    target_margin = round(float(equity) * float(margin_pct) / 100.0, 2)
+    target_notional = round(target_margin * base_leverage, 2)
     available_cash = equity - used_cash(positions)
     out = []
     for s in candidates:
@@ -105,6 +107,7 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
                 "symbol": s.get("symbol"),
                 "reason": ["insufficient_margin"],
                 "available_cash": round(available_cash, 8),
+                "target_margin": target_margin,
                 "target_notional": target_notional,
                 "max_leverage": float(max_leverage),
             }, ensure_ascii=False), file=sys.stderr)
@@ -160,7 +163,17 @@ def run_once(signals, args):
         if signal.get("action") == "OPEN" and symbol not in positions:
             candidates.append(signal)
     account_equity = current_equity(args.equity, positions, history, args.fee_bps)
-    made = orders(candidates, account_equity, args.slots, args.stop_buffer, positions, args.fee_bps, args.leverage, args.max_leverage)
+    made = orders(
+        candidates,
+        account_equity,
+        args.slots,
+        args.stop_buffer,
+        positions,
+        args.fee_bps,
+        args.leverage,
+        args.max_leverage,
+        args.margin_pct,
+    )
     for order in made:
         if binance_live.live_enabled():
             try:
@@ -224,17 +237,17 @@ def demo():
     )
     assert len(result) == 2
     assert result[0]["notional"] == 100.1
-    assert result[0]["margin"] == 100.1
+    assert result[0]["margin"] == 50.05
     assert result[0]["qty"] == 50.05
     assert result[0]["entry_fee"] == 0.1001
     assert result[0]["fee_bps"] == 10
-    assert result[0]["leverage"] == 1
+    assert result[0]["leverage"] == 2
     assert result[0]["stop"] == 1.782
     assert result[0]["take_profit"] == 2.04
     assert result[0]["take_profit_1"] == 2.04
     assert result[0]["take_profit_qty_pct"] == [100]
     assert orders(candidates, 1001, 1, 0.01, {"AAA": {}}) == []
-    nearly_full = {str(i): {"notional": 100.1, "margin": 100.1, "entry_fee": 0.1001, "leverage": 1} for i in range(9)}
+    nearly_full = {str(i): {"notional": 100.1, "margin": 50.05, "entry_fee": 0.1001, "leverage": 2} for i in range(9)}
     result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1001, 10, 0.01, nearly_full)
     assert result[0]["leverage"] == 2 and result[0]["margin"] == 50.05
     original_mark_price = watcher.mark_price
@@ -249,13 +262,14 @@ def demo():
 
 
 def main():
-    p = argparse.ArgumentParser(description="Allocate one fixed equity slot to each OPEN signal.")
+    p = argparse.ArgumentParser(description="Allocate a fixed margin percentage to each OPEN signal.")
     p.add_argument("--equity", type=float, required=False, default=10000)
     p.add_argument("--slots", type=int, default=10)
+    p.add_argument("--margin-pct", type=float, default=float(os.getenv("MARGIN_PCT", "5")))
     p.add_argument("--stop-buffer", type=float, default=0.01)
     p.add_argument("--fee-bps", type=float, default=float(os.getenv("FEE_BPS", "10")))
-    p.add_argument("--leverage", type=float, default=float(os.getenv("LEVERAGE", "1")))
-    p.add_argument("--max-leverage", type=float, default=float(os.getenv("MAX_LEVERAGE", "8")))
+    p.add_argument("--leverage", type=float, default=float(os.getenv("LEVERAGE", "2")))
+    p.add_argument("--max-leverage", type=float, default=float(os.getenv("MAX_LEVERAGE", os.getenv("LEVERAGE", "2"))))
     p.add_argument("--watch", action="store_true")
     p.add_argument("--interval", type=int, default=int(os.getenv("STRATEGY_SECONDS", "5")))
     p.add_argument("--level-kline", default=os.getenv("LEVEL_KLINE", "15m"))
