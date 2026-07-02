@@ -17,6 +17,7 @@ WATCHLIST = Path("watchlist.json")
 POSITIONS = Path("positions.json")
 HISTORY = Path("trade_history.json")
 SIGNALS = Path("signals.json")
+TAKE_PROFIT_MULT = 1.10
 
 
 def get_json(path, query=None):
@@ -168,26 +169,18 @@ def take_profit_signals(positions):
         qty = float(position.get("qty") or 0)
         if qty <= 0:
             continue
-        tp1 = position.get("take_profit_1")
-        tp2 = position.get("take_profit_2")
-        hit = set(position.get("take_profit_hit") or [])
-        if tp1 and "tp1" not in hit and price >= float(tp1):
+        entry = float(position.get("entry") or 0)
+        if entry <= 0:
+            continue
+        take_profit = round(entry * TAKE_PROFIT_MULT, 8)
+        if price >= take_profit:
             out.append({
-                "action": "PARTIAL_EXIT",
-                "symbol": symbol,
-                "price": price,
-                "qty": round(qty * 0.5, 8),
-                "tp_key": "tp1",
-                "reasons": ["take_profit_1"],
-            })
-        elif tp2 and "tp2" not in hit and price >= float(tp2):
-            out.append({
-                "action": "PARTIAL_EXIT",
+                "action": "EXIT",
                 "symbol": symbol,
                 "price": price,
                 "qty": qty,
-                "tp_key": "tp2",
-                "reasons": ["take_profit_2"],
+                "take_profit": take_profit,
+                "reasons": ["take_profit_10pct"],
             })
     return out
 
@@ -449,12 +442,7 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike
         if tp_signal["symbol"] not in positions:
             continue
         print(json.dumps(tp_signal, ensure_ascii=False))
-        position = positions.get(tp_signal["symbol"])
-        if position:
-            hit = set(position.get("take_profit_hit") or [])
-            hit.add(tp_signal["tp_key"])
-            position["take_profit_hit"] = sorted(hit)
-        execute_partial_exit(tp_signal, positions, persist=False)
+        execute_exit(tp_signal, watch, positions, persist=False)
         changed = True
     visible_signals = []
     for out in current_signals(args):

@@ -9,6 +9,7 @@ import strategy
 import watcher
 
 ROOT = Path(__file__).parent
+TAKE_PROFIT_MULT = 1.10
 
 
 def read_json(path, default):
@@ -46,6 +47,7 @@ def trade_history(positions):
                 "fee_bps": p.get("fee_bps"),
                 "leverage": p.get("leverage"),
                 "stop": p.get("stop"),
+                "take_profit": p.get("take_profit"),
                 "take_profit_1": p.get("take_profit_1"),
                 "take_profit_2": p.get("take_profit_2"),
                 "take_profit_qty_pct": p.get("take_profit_qty_pct"),
@@ -101,6 +103,7 @@ def enrich_positions(positions, default_fee_bps):
             price = None
             mark_error = prices_error or f"{symbol} has no futures ticker price; status={market_status}"
         entry = float(p.get("entry") or 0)
+        take_profit = round(entry * TAKE_PROFIT_MULT, 8) if entry else p.get("take_profit")
         qty = float(p.get("qty") or 0)
         fee_bps = float(p.get("fee_bps", default_fee_bps) or 0)
         entry_notional = float(p.get("notional") or (entry * qty))
@@ -128,6 +131,10 @@ def enrich_positions(positions, default_fee_bps):
             "notional": round(entry_notional, 8),
             "margin": round(margin, 8),
             "leverage": int(leverage) if leverage.is_integer() else leverage,
+            "take_profit": take_profit,
+            "take_profit_1": take_profit,
+            "take_profit_2": None,
+            "take_profit_qty_pct": [100],
             "gross_pnl": gross_pnl,
             "entry_fee": entry_fee,
             "exit_fee": exit_fee,

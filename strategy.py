@@ -10,6 +10,7 @@ import binance_live
 import watcher
 
 POSITIONS = Path("positions.json")
+TAKE_PROFIT_MULT = 1.10
 
 
 def fee_usdt(notional, fee_bps):
@@ -119,9 +120,9 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
             "fee_bps": float(fee_bps),
             "leverage": int(leverage) if leverage.is_integer() else leverage,
             "stop": round(s["support"] * (1 - stop_buffer), 8) if s.get("support") else None,
-            "take_profit_1": round(s["price"] * 1.15, 8),
-            "take_profit_2": round(s["price"] * 1.30, 8),
-            "take_profit_qty_pct": [50, 50],
+            "take_profit": round(s["price"] * TAKE_PROFIT_MULT, 8),
+            "take_profit_1": round(s["price"] * TAKE_PROFIT_MULT, 8),
+            "take_profit_qty_pct": [100],
         }
         if leverage > base_leverage:
             order["reason"] = [f"auto_leverage_{order['leverage']}x"]
@@ -171,8 +172,8 @@ def run_once(signals, args):
                 }, ensure_ascii=False), file=sys.stderr)
                 continue
             order["entry_fee"] = fee_usdt(order["notional"], order["fee_bps"])
-            order["take_profit_1"] = round(order["price"] * 1.15, 8)
-            order["take_profit_2"] = round(order["price"] * 1.30, 8)
+            order["take_profit"] = round(order["price"] * TAKE_PROFIT_MULT, 8)
+            order["take_profit_1"] = order["take_profit"]
         opened_at = int(time.time())
         positions[order["symbol"]] = {
             "entry": order["price"],
@@ -184,8 +185,8 @@ def run_once(signals, args):
             "leverage": order["leverage"],
             "opened_at": opened_at,
             "stop": order["stop"],
+            "take_profit": order["take_profit"],
             "take_profit_1": order["take_profit_1"],
-            "take_profit_2": order["take_profit_2"],
             "take_profit_qty_pct": order["take_profit_qty_pct"],
         }
         if order.get("live"):
@@ -222,8 +223,9 @@ def demo():
     assert result[0]["fee_bps"] == 10
     assert result[0]["leverage"] == 1
     assert result[0]["stop"] == 1.782
-    assert result[0]["take_profit_1"] == 2.3
-    assert result[0]["take_profit_2"] == 2.6
+    assert result[0]["take_profit"] == 2.2
+    assert result[0]["take_profit_1"] == 2.2
+    assert result[0]["take_profit_qty_pct"] == [100]
     assert orders(candidates, 1001, 1, 0.01, {"AAA": {}}) == []
     nearly_full = {str(i): {"notional": 100.1, "margin": 100.1, "entry_fee": 0.1001, "leverage": 1} for i in range(9)}
     result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1001, 10, 0.01, nearly_full)
