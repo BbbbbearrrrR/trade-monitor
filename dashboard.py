@@ -5,6 +5,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+import json_store
 import strategy
 import watcher
 
@@ -14,7 +15,7 @@ TAKE_PROFIT_MULT = 1.02
 
 def read_json(path, default):
     path = ROOT / path
-    return json.loads(path.read_text("utf-8")) if path.exists() else default
+    return json_store.read_json(path, default)
 
 
 def fee_usdt(notional, fee_bps):

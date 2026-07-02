@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import binance_live
+import json_store
 import watcher
 
 POSITIONS = Path("positions.json")
@@ -18,11 +19,11 @@ def fee_usdt(notional, fee_bps):
 
 
 def read_json(path, default):
-    return json.loads(path.read_text("utf-8")) if path.exists() else default
+    return json_store.read_json(path, default)
 
 
 def write_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
+    json_store.write_json(path, value)
 
 
 def position_margin(position):
@@ -145,6 +146,13 @@ def read_signals(stdin):
 
 
 def current_signals(args):
+    snapshot = read_json(watcher.SIGNALS, {})
+    if isinstance(snapshot, dict):
+        updated_at = int(snapshot.get("updated_at") or 0)
+        max_age = max(0, int(getattr(args, "signal_max_age_seconds", 0) or 0))
+        signals = snapshot.get("signals")
+        if max_age and isinstance(signals, list) and updated_at >= int(time.time()) - max_age:
+            return signals
     return watcher.current_signals(args)
 
 
@@ -279,6 +287,7 @@ def main():
     p.add_argument("--spike-minutes", type=int, default=int(os.getenv("SPIKE_MINUTES", "3")))
     p.add_argument("--breakout-buffer-pct", type=float, default=float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
+    p.add_argument("--signal-max-age-seconds", type=int, default=int(os.getenv("STRATEGY_SIGNAL_MAX_AGE_SECONDS", "15")))
     p.add_argument("--demo", action="store_true")
     args = p.parse_args()
     if args.demo:

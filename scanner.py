@@ -8,6 +8,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import json_store
+
 API = "https://fapi.binance.com"
 WATCHLIST = Path("watchlist.json")
 POSITIONS = Path("positions.json")
@@ -31,11 +33,11 @@ def get_json(path, query=None):
 
 
 def read_json(path, default):
-    return json.loads(path.read_text("utf-8")) if path.exists() else default
+    return json_store.read_json(path, default)
 
 
 def write_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
+    json_store.write_json(path, value)
 
 
 def days_to_delivery(symbol_info, now_ms=None):

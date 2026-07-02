@@ -11,6 +11,7 @@ import urllib.request
 from pathlib import Path
 
 import binance_live
+import json_store
 
 API = "https://fapi.binance.com"
 WATCHLIST = Path("watchlist.json")
@@ -37,11 +38,11 @@ def get_json(path, query=None):
 
 
 def read_json(path, default):
-    return json.loads(path.read_text("utf-8")) if path.exists() else default
+    return json_store.read_json(path, default)
 
 
 def write_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
+    json_store.write_json(path, value)
 
 
 def append_history(event, path=HISTORY, limit=1000):

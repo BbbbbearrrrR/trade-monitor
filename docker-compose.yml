@@ -2,6 +2,7 @@ services:
   dashboard:
     build: .
     command: python dashboard.py
+    restart: unless-stopped
     environment:
       EQUITY: ${EQUITY:-10000}
       SLOTS: ${SLOTS:-10}
@@ -14,6 +15,7 @@ services:
   scanner:
     build: .
     command: python scanner.py
+    restart: unless-stopped
     environment:
       MIN_CHANGE: ${MIN_CHANGE:-5}
       MAX_CHANGE: ${MAX_CHANGE:-30}
@@ -26,6 +28,7 @@ services:
   strategy:
     build: .
     command: python strategy.py --watch --equity ${EQUITY:-10000} --slots ${SLOTS:-10} --margin-pct ${MARGIN_PCT:-5} --fee-bps ${FEE_BPS:-10}
+    restart: unless-stopped
     environment:
       LEVEL_KLINE: ${LEVEL_KLINE:-15m}
       VOLUME_KLINE: ${VOLUME_KLINE:-1m}
@@ -51,6 +54,7 @@ services:
   watcher:
     build: .
     command: python watcher.py
+    restart: unless-stopped
     environment:
       LEVEL_KLINE: ${LEVEL_KLINE:-15m}
       VOLUME_KLINE: ${VOLUME_KLINE:-1m}
