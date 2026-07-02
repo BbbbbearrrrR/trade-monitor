@@ -239,8 +239,6 @@ def signals_payload():
             "vol_mult": float(os.getenv("VOL_MULT", "2")),
             "spike_minutes": int(os.getenv("SPIKE_MINUTES", "3")),
             "breakout_buffer_pct": float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")),
-            "breakout_confirm_bars": int(os.getenv("BREAKOUT_CONFIRM_BARS", "2")),
-            "min_breakout_close_position": float(os.getenv("MIN_BREAKOUT_CLOSE_POSITION", "0.6")),
             "setup_only": os.getenv("SETUP_ONLY", "1") != "0",
         })()
         signals = strategy.current_signals(args)

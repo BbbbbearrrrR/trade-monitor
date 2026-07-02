@@ -265,8 +265,6 @@ def main():
     p.add_argument("--vol-mult", type=float, default=float(os.getenv("VOL_MULT", "2")))
     p.add_argument("--spike-minutes", type=int, default=int(os.getenv("SPIKE_MINUTES", "3")))
     p.add_argument("--breakout-buffer-pct", type=float, default=float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")))
-    p.add_argument("--breakout-confirm-bars", type=int, default=int(os.getenv("BREAKOUT_CONFIRM_BARS", "2")))
-    p.add_argument("--min-breakout-close-position", type=float, default=float(os.getenv("MIN_BREAKOUT_CLOSE_POSITION", "0.6")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
     p.add_argument("--demo", action="store_true")
     args = p.parse_args()
