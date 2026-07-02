@@ -19,6 +19,7 @@ POSITIONS = Path("positions.json")
 HISTORY = Path("trade_history.json")
 SIGNALS = Path("signals.json")
 TAKE_PROFIT_MULT = 1.02
+STOP_LOSS_MAX_PCT = 5
 
 
 def get_json(path, query=None):
@@ -201,10 +202,20 @@ def take_profit_signals(positions):
     return out
 
 
+def effective_stop(position, max_loss_pct=None):
+    stop = position.get("stop")
+    entry = float(position.get("entry") or 0)
+    if entry <= 0:
+        return float(stop) if stop else None
+    max_loss_pct = float(os.getenv("STOP_LOSS_MAX_PCT", str(STOP_LOSS_MAX_PCT)) if max_loss_pct is None else max_loss_pct)
+    cap = entry * (1 - max_loss_pct / 100.0)
+    return max(float(stop), cap) if stop else cap
+
+
 def stop_loss_signals(positions):
     out = []
     for symbol, position in positions.items():
-        stop = position.get("stop")
+        stop = effective_stop(position)
         if not stop:
             continue
         try:
@@ -518,10 +529,13 @@ def demo():
     positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20, "entry_fee": 0.2, "fee_bps": 10, "leverage": 1}}
     order = execute_partial_exit({"symbol": "AAA", "price": 2.3, "qty": 5, "reasons": ["take_profit_1"]}, positions, persist=False, record_history=False)
     assert order["entry_fee"] == 0.1 and positions["AAA"]["entry_fee"] == 0.1
-    assert stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 2.1}}) == []
     original_mark_price = mark_price
-    globals()["mark_price"] = lambda symbol: 2.1
+    globals()["mark_price"] = lambda symbol: 2.11
     try:
+        assert stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 2.1}}) == []
+        globals()["mark_price"] = lambda symbol: 1.9
+        capped = stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 1.2}})
+        assert capped and capped[0]["reasons"] == ["stop_loss"]
         timed_out = timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 10800, now=10901)
         assert timed_out and timed_out[0]["reasons"] == ["position_timeout"]
         assert timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 10800, now=10899) == []

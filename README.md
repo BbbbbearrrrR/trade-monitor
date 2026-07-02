@@ -62,6 +62,8 @@ New positions start with `LEVERAGE=2`. By default `MAX_LEVERAGE=2`, so paper siz
 
 After a symbol is opened, it is blocked from opening again for `REENTRY_COOLDOWN_SECONDS` even if the previous position has already closed.
 
+Long stop-loss prices are capped by `STOP_LOSS_MAX_PCT`. If the structure stop is more than 5% below entry by default, the strategy uses `entry * 0.95` instead.
+
 ## Live Trading
 
 Default mode is always paper:
@@ -147,6 +149,7 @@ Common variables:
 | `VOL_MULT` | `2` | Recent volume multiplier versus prior average |
 | `SPIKE_MINUTES` | `3` | Recent volume window size |
 | `BREAKOUT_BUFFER_PCT` | `0.2` | Required close above resistance before treating it as a breakout |
+| `STOP_LOSS_MAX_PCT` | `5` | Maximum price loss percentage from entry before stop-loss |
 | `SETUP_ONLY` | `1` | Only process rows marked as setup |
 | `STRATEGY_SECONDS` | `1` | Strategy loop interval |
 | `WATCH_SECONDS` | `5` | Watcher loop interval |

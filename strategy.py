@@ -12,6 +12,7 @@ import watcher
 
 POSITIONS = Path("positions.json")
 TAKE_PROFIT_MULT = 1.02
+STOP_LOSS_MAX_PCT = 5
 
 
 def fee_usdt(notional, fee_bps):
@@ -77,6 +78,15 @@ def current_equity(initial_equity, positions, history, fee_bps):
     return float(initial_equity) + realized_pnl(history, fee_bps) + unrealized_pnl(positions, fee_bps)
 
 
+def capped_stop(entry, support=None, stop_buffer=0.01, max_loss_pct=STOP_LOSS_MAX_PCT):
+    entry = float(entry)
+    max_loss_stop = entry * (1 - float(max_loss_pct) / 100.0)
+    if support:
+        structure_stop = float(support) * (1 - float(stop_buffer))
+        return round(max(structure_stop, max_loss_stop), 8)
+    return round(max_loss_stop, 8)
+
+
 def recently_opened_symbols(history, cooldown_seconds, now=None):
     cooldown_seconds = int(cooldown_seconds or 0)
     if cooldown_seconds <= 0:
@@ -103,7 +113,7 @@ def choose_leverage(notional, fee, available_cash, base_leverage, max_leverage):
     return None, None
 
 
-def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, base_leverage=2, max_leverage=2, margin_pct=5):
+def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, base_leverage=2, max_leverage=2, margin_pct=5, stop_loss_max_pct=STOP_LOSS_MAX_PCT):
     open_slots = max(0, slots - len(positions or {}))
     if open_slots <= 0:
         return []
@@ -138,7 +148,7 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
             "entry_fee": entry_fee,
             "fee_bps": float(fee_bps),
             "leverage": int(leverage) if leverage.is_integer() else leverage,
-            "stop": round(s["support"] * (1 - stop_buffer), 8) if s.get("support") else None,
+            "stop": capped_stop(s["price"], s.get("support"), stop_buffer, stop_loss_max_pct),
             "take_profit": round(s["price"] * TAKE_PROFIT_MULT, 8),
             "take_profit_1": round(s["price"] * TAKE_PROFIT_MULT, 8),
             "take_profit_qty_pct": [100],
@@ -205,6 +215,7 @@ def run_once(signals, args):
         args.leverage,
         args.max_leverage,
         args.margin_pct,
+        args.stop_loss_max_pct,
     )
     for order in made:
         if binance_live.live_enabled():
@@ -274,7 +285,7 @@ def demo():
     assert result[0]["entry_fee"] == 0.1001
     assert result[0]["fee_bps"] == 10
     assert result[0]["leverage"] == 2
-    assert result[0]["stop"] == 1.782
+    assert result[0]["stop"] == 1.9
     assert result[0]["take_profit"] == 2.04
     assert result[0]["take_profit_1"] == 2.04
     assert result[0]["take_profit_qty_pct"] == [100]
@@ -282,6 +293,8 @@ def demo():
     nearly_full = {str(i): {"notional": 100.1, "margin": 50.05, "entry_fee": 0.1001, "leverage": 2} for i in range(9)}
     result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1001, 10, 0.01, nearly_full)
     assert result[0]["leverage"] == 2 and result[0]["margin"] == 50.05
+    assert result[0]["stop"] == 0.95
+    assert capped_stop(2, 1.98, 0.01, 5) == 1.9602
     history = [
         {"action": "BUY", "symbol": "AAA", "opened_at": 1000},
         {"action": "CLOSE", "symbol": "BBB", "closed_at": 1100},
@@ -307,6 +320,7 @@ def main():
     p.add_argument("--margin-pct", type=float, default=float(os.getenv("MARGIN_PCT", "5")))
     p.add_argument("--reentry-cooldown-seconds", type=int, default=int(os.getenv("REENTRY_COOLDOWN_SECONDS", "3600")))
     p.add_argument("--stop-buffer", type=float, default=0.01)
+    p.add_argument("--stop-loss-max-pct", type=float, default=float(os.getenv("STOP_LOSS_MAX_PCT", str(STOP_LOSS_MAX_PCT))))
     p.add_argument("--fee-bps", type=float, default=float(os.getenv("FEE_BPS", "10")))
     p.add_argument("--leverage", type=float, default=float(os.getenv("LEVERAGE", "2")))
     p.add_argument("--max-leverage", type=float, default=float(os.getenv("MAX_LEVERAGE", os.getenv("LEVERAGE", "2"))))
