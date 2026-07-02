@@ -164,7 +164,7 @@ Scanner variables:
 | `MIN_DELIVERY_DAYS` | `7` | Exclude contracts whose `deliveryDate` is within this many days |
 | `SCAN_VOLUME_KLINE` | `1h` | Candle interval used to compare recent and prior quote volume |
 | `SCAN_VOLUME_HOURS` | `24` | Number of hours in each quote-volume comparison window |
-| `SCAN_SECONDS` | `300` | Scanner refresh interval |
+| `SCAN_SECONDS` | `10` | Scanner refresh interval |
 
 ## Local Commands
 

@@ -256,7 +256,7 @@ def main():
     p.add_argument("--min-delivery-days", type=float, default=float(os.getenv("MIN_DELIVERY_DAYS", "7")))
     p.add_argument("--volume-kline", default=os.getenv("SCAN_VOLUME_KLINE", "1h"))
     p.add_argument("--volume-hours", type=int, default=int(os.getenv("SCAN_VOLUME_HOURS", "24")))
-    p.add_argument("--interval", type=int, default=int(os.getenv("SCAN_SECONDS", "600")))
+    p.add_argument("--interval", type=int, default=int(os.getenv("SCAN_SECONDS", "10")))
     p.add_argument("--once", action="store_true")
     p.add_argument("--demo", action="store_true")
     args = p.parse_args()
