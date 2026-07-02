@@ -17,7 +17,7 @@ WATCHLIST = Path("watchlist.json")
 POSITIONS = Path("positions.json")
 HISTORY = Path("trade_history.json")
 SIGNALS = Path("signals.json")
-TAKE_PROFIT_MULT = 1.10
+TAKE_PROFIT_MULT = 1.02
 
 
 def get_json(path, query=None):
@@ -195,7 +195,7 @@ def take_profit_signals(positions):
                 "price": price,
                 "qty": qty,
                 "take_profit": take_profit,
-                "reasons": ["take_profit_10pct"],
+                "reasons": ["take_profit_2pct"],
             })
     return out
 

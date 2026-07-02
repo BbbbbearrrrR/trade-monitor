@@ -10,7 +10,7 @@ import binance_live
 import watcher
 
 POSITIONS = Path("positions.json")
-TAKE_PROFIT_MULT = 1.10
+TAKE_PROFIT_MULT = 1.02
 
 
 def fee_usdt(notional, fee_bps):
@@ -230,8 +230,8 @@ def demo():
     assert result[0]["fee_bps"] == 10
     assert result[0]["leverage"] == 1
     assert result[0]["stop"] == 1.782
-    assert result[0]["take_profit"] == 2.2
-    assert result[0]["take_profit_1"] == 2.2
+    assert result[0]["take_profit"] == 2.04
+    assert result[0]["take_profit_1"] == 2.04
     assert result[0]["take_profit_qty_pct"] == [100]
     assert orders(candidates, 1001, 1, 0.01, {"AAA": {}}) == []
     nearly_full = {str(i): {"notional": 100.1, "margin": 100.1, "entry_fee": 0.1001, "leverage": 1} for i in range(9)}

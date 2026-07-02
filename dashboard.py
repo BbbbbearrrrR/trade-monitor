@@ -9,7 +9,7 @@ import strategy
 import watcher
 
 ROOT = Path(__file__).parent
-TAKE_PROFIT_MULT = 1.10
+TAKE_PROFIT_MULT = 1.02
 
 
 def read_json(path, default):
