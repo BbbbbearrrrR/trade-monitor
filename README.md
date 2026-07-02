@@ -162,12 +162,13 @@ Scanner variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SCAN_LIMIT` | `30` | Number of ranked gainers kept in the watchlist |
+| `SCAN_LIMIT` | `50` | Number of ranked gainers kept in the watchlist |
 | `MIN_CHANGE` | `5` | Minimum 24h percent change |
 | `MAX_CHANGE` | `30` | Maximum 24h percent change |
 | `MIN_DELIVERY_DAYS` | `7` | Exclude contracts whose `deliveryDate` is within this many days |
 | `SCAN_VOLUME_KLINE` | `1m` | Candle interval used to compare recent and prior quote volume |
 | `SCAN_VOLUME_MINUTES` | `15` | Number of minutes in each quote-volume comparison window |
+| `SCAN_MIN_VOLUME_GROWTH_RATIO` | `1.1` | Minimum recent/prior quote-volume growth ratio required for watchlist inclusion |
 | `SCAN_SECONDS` | `10` | Scanner refresh interval |
 
 ## Local Commands

@@ -150,7 +150,7 @@ def refresh(row, t, rank):
     return row
 
 
-def scan(limit, min_change, max_change, min_delivery_days, positions_path=POSITIONS, volume_kline="1m", volume_minutes=15):
+def scan(limit, min_change, max_change, min_delivery_days, positions_path=POSITIONS, volume_kline="1m", volume_minutes=15, min_volume_growth_ratio=1.1):
     watch = read_json(WATCHLIST, {})
     open_symbols = set(read_json(positions_path, {}).keys())
     added = []
@@ -170,6 +170,8 @@ def scan(limit, min_change, max_change, min_delivery_days, positions_path=POSITI
         t["volumeGrowth15mRatio"] = round(volume_growth_ratio or 0, 4)
         t["recentQuoteVolume15m"] = round(recent_qvol or 0, 2)
         t["previousQuoteVolume15m"] = round(previous_qvol or 0, 2)
+        if volume_growth_ratio is None or volume_growth_ratio < min_volume_growth_ratio:
+            continue
         ranked.append(t)
 
     ranked.sort(key=lambda t: (float(t.get("volumeGrowth15mRatio") or 0), float(t.get("recentQuoteVolume15m") or 0), float(t["priceChangePercent"])), reverse=True)
@@ -212,6 +214,8 @@ def demo():
         added = scan(10, 5, 30, 7, tmp_positions)
         assert [row["symbol"] for row in added] == ["FASTUSDT", "NEWUSDT"]
         assert "OPENUSDT" not in read_json(tmp_watch, {})
+        added = scan(10, 5, 30, 7, tmp_positions, min_volume_growth_ratio=2)
+        assert [row["symbol"] for row in added] == ["FASTUSDT"]
     finally:
         globals()["tickers"] = original_tickers
         globals()["quote_volume_growth"] = original_growth
@@ -224,12 +228,13 @@ def demo():
 
 def main():
     p = argparse.ArgumentParser(description="Add Binance USDT perpetual 24h gainers to watchlist.json.")
-    p.add_argument("--limit", type=int, default=int(os.getenv("SCAN_LIMIT", "30")))
+    p.add_argument("--limit", type=int, default=int(os.getenv("SCAN_LIMIT", "50")))
     p.add_argument("--min-change", type=float, default=float(os.getenv("MIN_CHANGE", "5")))
     p.add_argument("--max-change", type=float, default=float(os.getenv("MAX_CHANGE", "30")))
     p.add_argument("--min-delivery-days", type=float, default=float(os.getenv("MIN_DELIVERY_DAYS", "7")))
     p.add_argument("--volume-kline", default=os.getenv("SCAN_VOLUME_KLINE", "1m"))
     p.add_argument("--volume-minutes", type=int, default=int(os.getenv("SCAN_VOLUME_MINUTES", "15")))
+    p.add_argument("--min-volume-growth-ratio", type=float, default=float(os.getenv("SCAN_MIN_VOLUME_GROWTH_RATIO", "1.1")))
     p.add_argument("--interval", type=int, default=int(os.getenv("SCAN_SECONDS", "10")))
     p.add_argument("--once", action="store_true")
     p.add_argument("--demo", action="store_true")
@@ -245,6 +250,7 @@ def main():
             args.min_delivery_days,
             volume_kline=args.volume_kline,
             volume_minutes=args.volume_minutes,
+            min_volume_growth_ratio=args.min_volume_growth_ratio,
         )
         if args.once:
             return
