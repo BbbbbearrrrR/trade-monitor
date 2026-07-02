@@ -37,7 +37,7 @@ Support and resistance are calculated from the latest 15 completed structure can
 An `OPEN` signal requires both:
 
 - latest volume candle close above resistance plus `BREAKOUT_BUFFER_PCT`
-- recent quote volume greater than the higher of the minimum quote-volume threshold or `VOL_MULT` times the expected recent volume
+- recent average quote volume greater than the higher of the minimum average quote-volume threshold or `VOL_MULT` times the prior 20-candle average quote volume
 
 ## Strategy Sizing
 
@@ -145,7 +145,7 @@ Common variables:
 | `SETUP_ONLY` | `1` | Only process rows marked as setup |
 | `STRATEGY_SECONDS` | `1` | Strategy loop interval |
 | `WATCH_SECONDS` | `5` | Watcher loop interval |
-| `POSITION_TIMEOUT_SECONDS` | `1800` | Close positions after this many seconds; default is 30 minutes, `0` disables |
+| `POSITION_TIMEOUT_SECONDS` | `3600` | Close positions after this many seconds; default is 1 hour, `0` disables |
 | `LEVERAGE` | `1` | Starting leverage for new paper positions |
 | `MAX_LEVERAGE` | `8` | Maximum auto-escalated leverage when paper cash is insufficient |
 | `TRADE_MODE` | `paper` | `paper` keeps local simulated orders; `live` sends Binance Futures orders |

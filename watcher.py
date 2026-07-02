@@ -356,11 +356,11 @@ def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_
     recent = rows[-spike_bars:]
     prev = rows[-(prev_bars + spike_bars):-spike_bars]
     recent_qvol = sum(r["qvol"] for r in recent)
-    avg_qvol = sum(r["qvol"] for r in prev) / len(prev)
-    expected_qvol = avg_qvol * spike_bars
-    min_window_qvol = min_qvol * ((spike_bars * kline_minutes) / 15)
-    threshold = max(min_window_qvol, expected_qvol * vol_mult)
-    volume_ratio = recent_qvol / expected_qvol if expected_qvol else 0
+    recent_avg_qvol = recent_qvol / spike_bars
+    baseline_avg_qvol = sum(r["qvol"] for r in prev) / len(prev)
+    min_avg_qvol = min_qvol * (kline_minutes / 15)
+    threshold_avg_qvol = max(min_avg_qvol, baseline_avg_qvol * vol_mult)
+    volume_ratio = recent_avg_qvol / baseline_avg_qvol if baseline_avg_qvol else 0
 
     resistance = levels.get("resistance")
     breakout_price = resistance * (1 + breakout_buffer_pct / 100.0) if resistance else None
@@ -369,13 +369,13 @@ def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_
 
     if levels.get("support") and last["c"] < levels["support"]:
         return "EXIT", ["structure_break"], volume_ratio, recent_qvol
-    if broke_resistance and recent_qvol >= threshold and bullish_spike:
+    if broke_resistance and recent_avg_qvol >= threshold_avg_qvol and bullish_spike:
         return "OPEN", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike", "bullish_spike"], volume_ratio, recent_qvol
-    if broke_resistance and recent_qvol >= threshold:
+    if broke_resistance and recent_avg_qvol >= threshold_avg_qvol:
         return "SETUP", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike", "waiting_bullish_spike"], volume_ratio, recent_qvol
     if broke_resistance:
         return "SETUP", ["setup", "resistance_break", "waiting_volume"], volume_ratio, recent_qvol
-    if recent_qvol >= threshold:
+    if recent_avg_qvol >= threshold_avg_qvol:
         return "SETUP", ["setup", f"{spike_bars * kline_minutes}m_volume_spike", "waiting_breakout"], volume_ratio, recent_qvol
     return "SETUP", ["setup", "waiting_breakout", "waiting_volume"], volume_ratio, recent_qvol
 
@@ -435,7 +435,7 @@ def current_signals(args):
     return out
 
 
-def watch_once(level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, position_timeout_seconds=1800, breakout_buffer_pct=0.2):
+def watch_once(level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, position_timeout_seconds=3600, breakout_buffer_pct=0.2):
     watch = read_json(WATCHLIST, {})
     positions = read_json(POSITIONS, {})
     args = type("Args", (), {
@@ -539,7 +539,7 @@ def main():
     p.add_argument("--breakout-buffer-pct", type=float, default=float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
     p.add_argument("--interval", type=int, default=int(os.getenv("WATCH_SECONDS", "15")))
-    p.add_argument("--position-timeout-seconds", type=int, default=int(os.getenv("POSITION_TIMEOUT_SECONDS", "1800")))
+    p.add_argument("--position-timeout-seconds", type=int, default=int(os.getenv("POSITION_TIMEOUT_SECONDS", "3600")))
     p.add_argument("--once", action="store_true")
     p.add_argument("--demo", action="store_true")
     args = p.parse_args()
