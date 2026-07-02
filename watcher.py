@@ -69,7 +69,13 @@ def append_history(event, path=HISTORY, limit=1000):
 
 def bars(symbol, interval, limit):
     rows = get_json("/fapi/v1/klines", {"symbol": symbol, "interval": interval, "limit": limit})
-    return [{"t": int(r[0] / 1000), "o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4]), "vol": float(r[5]), "qvol": float(r[7]), "trades": int(r[8])} for r in rows]
+    return [{"t": int(r[0] / 1000), "close_t": int(r[6] / 1000), "o": float(r[1]), "h": float(r[2]), "l": float(r[3]), "c": float(r[4]), "vol": float(r[5]), "qvol": float(r[7]), "trades": int(r[8])} for r in rows]
+
+
+def closed_bars(symbol, interval, limit):
+    now = int(time.time())
+    rows = [row for row in bars(symbol, interval, limit + 2) if row.get("close_t", 0) <= now]
+    return rows[-limit:]
 
 
 @functools.lru_cache(maxsize=1)
@@ -345,7 +351,7 @@ def interval_minutes(interval):
     raise ValueError(f"unsupported interval: {interval}")
 
 
-def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_kline, breakout_buffer_pct=0.0):
+def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_kline, breakout_buffer_pct=0.0, confirm_bars=2, min_close_position=0.6):
     kline_minutes = interval_minutes(volume_kline)
     spike_bars = max(1, int(round(spike_minutes / kline_minutes)))
     prev_bars = 20
@@ -366,13 +372,28 @@ def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_
     breakout_price = resistance * (1 + breakout_buffer_pct / 100.0) if resistance else None
     broke_resistance = bool(breakout_price and last["c"] > breakout_price)
     bullish_spike = last["c"] > recent[0]["o"] and last["c"] >= last["o"]
+    confirmed_breakout = bool(
+        broke_resistance
+        and len(recent) >= confirm_bars
+        and all(r["c"] > breakout_price for r in recent[-confirm_bars:])
+    )
+    candle_range = last["h"] - last["l"]
+    close_position = (last["c"] - last["l"]) / candle_range if candle_range > 0 else 1
+    strong_close = close_position >= min_close_position
 
     if levels.get("support") and last["c"] < levels["support"]:
         return "EXIT", ["structure_break"], volume_ratio, recent_qvol
-    if broke_resistance and recent_qvol >= threshold and bullish_spike:
-        return "OPEN", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike", "bullish_spike"], volume_ratio, recent_qvol
+    if confirmed_breakout and recent_qvol >= threshold and bullish_spike and strong_close:
+        return "OPEN", ["setup", "resistance_break", "confirmed_breakout", f"{spike_bars * kline_minutes}m_volume_spike", "bullish_spike"], volume_ratio, recent_qvol
     if broke_resistance and recent_qvol >= threshold:
-        return "SETUP", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike", "waiting_bullish_spike"], volume_ratio, recent_qvol
+        reasons = ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike"]
+        if not confirmed_breakout:
+            reasons.append("waiting_confirmation")
+        if not bullish_spike:
+            reasons.append("waiting_bullish_spike")
+        if not strong_close:
+            reasons.append("weak_close")
+        return "SETUP", reasons, volume_ratio, recent_qvol
     if broke_resistance:
         return "SETUP", ["setup", "resistance_break", "waiting_volume"], volume_ratio, recent_qvol
     if recent_qvol >= threshold:
@@ -380,14 +401,14 @@ def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_
     return "SETUP", ["setup", "waiting_breakout", "waiting_volume"], volume_ratio, recent_qvol
 
 
-def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, breakout_buffer_pct=0.2):
+def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, breakout_buffer_pct=0.2, confirm_bars=2, min_close_position=0.6):
     if setup_only and not is_setup(row):
         return None
-    level_rows = bars(symbol, level_kline, 16)
+    level_rows = closed_bars(symbol, level_kline, 16)
     spike_bars = max(1, int(round(spike_minutes / interval_minutes(volume_kline))))
-    volume_rows = bars(symbol, volume_kline, 20 + spike_bars)
+    volume_rows = closed_bars(symbol, volume_kline, 20 + spike_bars)
     levels = structure(level_rows[:-1])
-    action, reasons, volume_ratio, recent_qvol = volume_spike_signal(levels, volume_rows, min_qvol, vol_mult, spike_minutes, volume_kline, breakout_buffer_pct)
+    action, reasons, volume_ratio, recent_qvol = volume_spike_signal(levels, volume_rows, min_qvol, vol_mult, spike_minutes, volume_kline, breakout_buffer_pct, confirm_bars, min_close_position)
     last = volume_rows[-1]
     breakout_pct = (last["c"] / levels["resistance"] - 1) * 100 if levels["resistance"] else 0
     return {
@@ -422,6 +443,8 @@ def current_signals(args):
                 args.spike_minutes,
                 args.setup_only,
                 getattr(args, "breakout_buffer_pct", 0.2),
+                getattr(args, "breakout_confirm_bars", 2),
+                getattr(args, "min_breakout_close_position", 0.6),
             )
         except (OSError, urllib.error.URLError) as e:
             print(f"skip {symbol}: {e}", file=sys.stderr)
@@ -432,7 +455,7 @@ def current_signals(args):
     return out
 
 
-def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike_minutes, setup_only=True, position_timeout_seconds=21600, breakout_buffer_pct=0.2):
+def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike_minutes, setup_only=True, position_timeout_seconds=21600, breakout_buffer_pct=0.2, breakout_confirm_bars=2, min_breakout_close_position=0.6):
     watch = read_json(WATCHLIST, {})
     positions = read_json(POSITIONS, {})
     args = type("Args", (), {
@@ -444,6 +467,8 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike
         "spike_minutes": spike_minutes,
         "setup_only": setup_only,
         "breakout_buffer_pct": breakout_buffer_pct,
+        "breakout_confirm_bars": breakout_confirm_bars,
+        "min_breakout_close_position": min_breakout_close_position,
     })()
     changed = False
     for stop_signal in stop_loss_signals(positions):
@@ -535,6 +560,8 @@ def main():
     p.add_argument("--vol-mult", type=float, default=float(os.getenv("VOL_MULT", "2")))
     p.add_argument("--spike-minutes", type=int, default=int(os.getenv("SPIKE_MINUTES", "3")))
     p.add_argument("--breakout-buffer-pct", type=float, default=float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")))
+    p.add_argument("--breakout-confirm-bars", type=int, default=int(os.getenv("BREAKOUT_CONFIRM_BARS", "2")))
+    p.add_argument("--min-breakout-close-position", type=float, default=float(os.getenv("MIN_BREAKOUT_CLOSE_POSITION", "0.6")))
     p.add_argument("--max-symbols", type=int, default=int(os.getenv("MAX_SYMBOLS", "50")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
     p.add_argument("--interval", type=int, default=int(os.getenv("WATCH_SECONDS", "15")))
@@ -556,6 +583,8 @@ def main():
             args.setup_only,
             args.position_timeout_seconds,
             args.breakout_buffer_pct,
+            args.breakout_confirm_bars,
+            args.min_breakout_close_position,
         )
         if args.once:
             return

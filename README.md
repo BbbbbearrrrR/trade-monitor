@@ -36,10 +36,12 @@ Signal defaults:
 
 Support and resistance are calculated from the latest 15 completed structure candles. The code first looks for confirmed swing highs/lows using two candles on each side. If no confirmed pivot exists, it falls back to the high/low of the confirmed window while excluding the newest unconfirmed edge.
 
-An `OPEN` signal requires both:
+An `OPEN` signal requires all of:
 
-- latest volume candle close above resistance plus `BREAKOUT_BUFFER_PCT`
+- only completed volume candles are considered; the still-forming candle is ignored
+- the latest `BREAKOUT_CONFIRM_BARS` completed candles close above resistance plus `BREAKOUT_BUFFER_PCT`
 - recent quote volume greater than the higher of the minimum quote-volume threshold or `VOL_MULT` times the expected recent volume
+- the spike window is bullish, and the latest candle closes in the upper `MIN_BREAKOUT_CLOSE_POSITION` portion of its range
 
 ## Strategy Sizing
 
@@ -144,6 +146,8 @@ Common variables:
 | `VOL_MULT` | `2` | Recent volume multiplier versus prior average |
 | `SPIKE_MINUTES` | `3` | Recent volume window size |
 | `BREAKOUT_BUFFER_PCT` | `0.2` | Required close above resistance before treating it as a breakout |
+| `BREAKOUT_CONFIRM_BARS` | `2` | Number of completed volume candles that must close above breakout level |
+| `MIN_BREAKOUT_CLOSE_POSITION` | `0.6` | Minimum close position within the latest candle range; `0.6` means upper 40% |
 | `MAX_SYMBOLS` | `50` | Maximum watchlist rows to evaluate |
 | `SETUP_ONLY` | `1` | Only process rows marked as setup |
 | `STRATEGY_SECONDS` | `1` | Strategy loop interval |
