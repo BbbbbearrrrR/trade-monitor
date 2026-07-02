@@ -190,7 +190,7 @@ def run_once(signals, args):
     for signal in signals:
         symbol = signal.get("symbol")
         if signal.get("action") == "EXIT":
-            if watcher.execute_exit(signal, watch, positions, persist=True):
+            if watcher.execute_exit(signal):
                 positions = read_json(POSITIONS, {})
                 watch = watcher.read_json(watcher.WATCHLIST, {})
             continue

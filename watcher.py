@@ -462,25 +462,29 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, set
     changed = False
     for stop_signal in stop_loss_signals(positions):
         print(json.dumps(stop_signal, ensure_ascii=False))
-        execute_exit(stop_signal, watch, positions, persist=False)
+        if execute_exit(stop_signal):
+            positions = read_json(POSITIONS, {})
         changed = True
     for timeout_signal in timeout_signals(positions, position_timeout_seconds):
         if timeout_signal["symbol"] not in positions:
             continue
         print(json.dumps(timeout_signal, ensure_ascii=False))
-        execute_exit(timeout_signal, watch, positions, persist=False)
+        if execute_exit(timeout_signal):
+            positions = read_json(POSITIONS, {})
         changed = True
     for tp_signal in take_profit_signals(positions):
         if tp_signal["symbol"] not in positions:
             continue
         print(json.dumps(tp_signal, ensure_ascii=False))
-        execute_exit(tp_signal, watch, positions, persist=False)
+        if execute_exit(tp_signal):
+            positions = read_json(POSITIONS, {})
         changed = True
     visible_signals = []
     for out in current_signals(args):
         print(json.dumps(out, ensure_ascii=False))
         if out["action"] == "EXIT":
-            execute_exit(out, watch, positions, persist=False)
+            if execute_exit(out):
+                positions = read_json(POSITIONS, {})
             changed = True
         else:
             visible_signals.append(out)
@@ -488,9 +492,6 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, set
         "updated_at": int(time.time()),
         "signals": visible_signals,
     })
-    if changed:
-        write_json(WATCHLIST, watch)
-        write_json(POSITIONS, positions)
 
 
 def demo():
