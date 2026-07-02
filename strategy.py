@@ -153,7 +153,9 @@ def run_once(signals, args):
     for signal in signals:
         symbol = signal.get("symbol")
         if signal.get("action") == "EXIT":
-            watcher.execute_exit(signal, watch, positions, persist=False)
+            if watcher.execute_exit(signal, watch, positions, persist=True):
+                positions = read_json(POSITIONS, {})
+                watch = watcher.read_json(watcher.WATCHLIST, {})
             continue
         if signal.get("action") == "OPEN" and symbol not in positions:
             candidates.append(signal)
@@ -174,8 +176,11 @@ def run_once(signals, args):
             order["entry_fee"] = fee_usdt(order["notional"], order["fee_bps"])
             order["take_profit"] = round(order["price"] * TAKE_PROFIT_MULT, 8)
             order["take_profit_1"] = order["take_profit"]
+        latest_positions = read_json(POSITIONS, {})
+        if order["symbol"] in latest_positions:
+            continue
         opened_at = int(time.time())
-        positions[order["symbol"]] = {
+        position = {
             "entry": order["price"],
             "qty": order["qty"],
             "notional": order["notional"],
@@ -190,17 +195,19 @@ def run_once(signals, args):
             "take_profit_qty_pct": order["take_profit_qty_pct"],
         }
         if order.get("live"):
-            positions[order["symbol"]].update({
+            position.update({
                 "live": True,
                 "exchange": order.get("exchange"),
                 "order_id": order.get("order_id"),
                 "client_order_id": order.get("client_order_id"),
                 "status": order.get("status"),
             })
+        latest_positions[order["symbol"]] = position
+        write_json(POSITIONS, latest_positions)
+        positions = latest_positions
         default_reason = ["live_entry"] if order.get("live") else ["paper_entry"]
         watcher.append_history({**order, "opened_at": opened_at, "reason": order.get("reason", default_reason)})
         print(json.dumps(order, ensure_ascii=False))
-    write_json(POSITIONS, positions)
     watcher.write_json(watcher.WATCHLIST, watch)
 
 

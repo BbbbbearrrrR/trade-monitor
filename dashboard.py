@@ -27,7 +27,28 @@ def mark_prices():
 
 
 def trade_history(positions):
-    history = read_json("trade_history.json", [])
+    history = []
+    for row in read_json("trade_history.json", []):
+        if row.get("action") == "CLOSE":
+            reason = tuple(row.get("reason") or row.get("reasons") or [])
+            closed_at = int(row.get("closed_at") or 0)
+            duplicate = False
+            for prev in reversed(history[-20:]):
+                prev_reason = tuple(prev.get("reason") or prev.get("reasons") or [])
+                prev_closed_at = int(prev.get("closed_at") or 0)
+                if (
+                    prev.get("action") == "CLOSE"
+                    and prev.get("symbol") == row.get("symbol")
+                    and prev.get("entry") == row.get("entry")
+                    and prev.get("qty") == row.get("qty")
+                    and prev_reason == reason
+                    and abs(closed_at - prev_closed_at) <= 180
+                ):
+                    duplicate = True
+                    break
+            if duplicate:
+                continue
+        history.append(row)
     seen_opens = {
         (row.get("symbol"), row.get("opened_at"))
         for row in history

@@ -46,6 +46,21 @@ def write_json(path, value):
 
 def append_history(event, path=HISTORY, limit=1000):
     history = read_json(path, [])
+    if event.get("action") == "CLOSE":
+        reason = tuple(event.get("reason") or event.get("reasons") or [])
+        closed_at = int(event.get("closed_at") or time.time())
+        for row in reversed(history[-20:]):
+            row_reason = tuple(row.get("reason") or row.get("reasons") or [])
+            row_closed_at = int(row.get("closed_at") or 0)
+            if (
+                row.get("action") == "CLOSE"
+                and row.get("symbol") == event.get("symbol")
+                and row.get("entry") == event.get("entry")
+                and row.get("qty") == event.get("qty")
+                and row_reason == reason
+                and abs(closed_at - row_closed_at) <= 180
+            ):
+                return
     history.append(event)
     if len(history) > limit:
         history = history[-limit:]
@@ -350,11 +365,14 @@ def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_
     resistance = levels.get("resistance")
     breakout_price = resistance * (1 + breakout_buffer_pct / 100.0) if resistance else None
     broke_resistance = bool(breakout_price and last["c"] > breakout_price)
+    bullish_spike = last["c"] > recent[0]["o"] and last["c"] >= last["o"]
 
     if levels.get("support") and last["c"] < levels["support"]:
         return "EXIT", ["structure_break"], volume_ratio, recent_qvol
+    if broke_resistance and recent_qvol >= threshold and bullish_spike:
+        return "OPEN", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike", "bullish_spike"], volume_ratio, recent_qvol
     if broke_resistance and recent_qvol >= threshold:
-        return "OPEN", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike"], volume_ratio, recent_qvol
+        return "SETUP", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike", "waiting_bullish_spike"], volume_ratio, recent_qvol
     if broke_resistance:
         return "SETUP", ["setup", "resistance_break", "waiting_volume"], volume_ratio, recent_qvol
     if recent_qvol >= threshold:
@@ -473,7 +491,10 @@ def demo():
     rows1m = [{"t": i, "o": 1.36, "h": 1.38, "l": 1.35, "c": 1.36, "vol": 1, "qvol": 1000, "trades": 10} for i in range(20)]
     rows1m += [{"t": 21 + i, "o": 1.36, "h": 1.45, "l": 1.35, "c": 1.43, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
     action, reasons, ratio, recent_qvol = volume_spike_signal(structure(rows15), rows1m, 1000, 3, 3, "1m", 0.2)
-    assert action == "OPEN" and "resistance_break" in reasons and "3m_volume_spike" in reasons and ratio == 3.5 and recent_qvol == 10500
+    assert action == "OPEN" and "resistance_break" in reasons and "3m_volume_spike" in reasons and "bullish_spike" in reasons and ratio == 3.5 and recent_qvol == 10500
+    bearish_spike_rows = rows1m[:-3] + [{"t": 21 + i, "o": 1.48, "h": 1.5, "l": 1.42, "c": 1.43, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
+    action, reasons, _, _ = volume_spike_signal(structure(rows15), bearish_spike_rows, 1000, 3, 3, "1m", 0.2)
+    assert action == "SETUP" and "waiting_bullish_spike" in reasons
     touch_rows = rows1m[:-3] + [{"t": 21 + i, "o": 1.36, "h": 1.43, "l": 1.35, "c": 1.421, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
     action, reasons, _, _ = volume_spike_signal(structure(rows15), touch_rows, 1000, 3, 3, "1m", 0.2)
     assert action == "SETUP" and "waiting_breakout" in reasons
