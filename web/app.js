@@ -117,8 +117,9 @@ function render(updatedAt){
   const clockText = updatedAt ? new Date(updatedAt * 1000).toLocaleString() : new Date().toLocaleString();
   const signalsHtml = signals.map(s=>{
     const meta = state.watchlist[s.symbol] || {};
-    const ch = meta.change24h ?? 0;
-    const vol15m = meta.volumeGrowth15mRatio ? `${compact(meta.volumeGrowth15mRatio, 2)}x` : "";
+    const ch = meta.change24h ?? s.source_change24h;
+    const vol15mRatio = meta.volumeGrowth15mRatio ?? s.source_volume_growth_15m_ratio;
+    const vol15m = Number.isFinite(Number(vol15mRatio)) ? `${compact(vol15mRatio, 2)}x` : "";
     return `<tr data-symbol="${s.symbol}" class="${s.symbol===selectedSymbol?"selected":""}"><td>${s.symbol}</td><td class="${ch>=0?"pos":"neg"}">${fmt(ch)}%</td><td>${vol15m}</td><td>${fmt(s.support)}</td><td>${fmt(s.resistance)}</td><td>${fmt(s.qvol)}</td><td>${fmt(s.volume_ratio)}</td><td><span class="${cls(s.action)}">${s.action}</span></td></tr>`;
   }).join("");
   const positionsHtml = positions.map(([sym,p])=>{

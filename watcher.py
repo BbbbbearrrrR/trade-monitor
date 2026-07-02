@@ -403,6 +403,7 @@ def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, s
         "volume_window_minutes": spike_bars * interval_minutes(volume_kline),
         "reasons": reasons,
         "source_rank": row.get("rank"),
+        "source_change24h": row.get("change24h"),
         "source_volume_growth_15m_pct": row.get("volumeGrowth15mPct"),
         "source_volume_growth_15m_ratio": row.get("volumeGrowth15mRatio"),
     }
@@ -434,7 +435,7 @@ def current_signals(args):
     return out
 
 
-def watch_once(level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, position_timeout_seconds=900, breakout_buffer_pct=0.2):
+def watch_once(level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, position_timeout_seconds=1800, breakout_buffer_pct=0.2):
     watch = read_json(WATCHLIST, {})
     positions = read_json(POSITIONS, {})
     args = type("Args", (), {
@@ -538,7 +539,7 @@ def main():
     p.add_argument("--breakout-buffer-pct", type=float, default=float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
     p.add_argument("--interval", type=int, default=int(os.getenv("WATCH_SECONDS", "15")))
-    p.add_argument("--position-timeout-seconds", type=int, default=int(os.getenv("POSITION_TIMEOUT_SECONDS", "900")))
+    p.add_argument("--position-timeout-seconds", type=int, default=int(os.getenv("POSITION_TIMEOUT_SECONDS", "1800")))
     p.add_argument("--once", action="store_true")
     p.add_argument("--demo", action="store_true")
     args = p.parse_args()

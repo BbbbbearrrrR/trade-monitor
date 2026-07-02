@@ -145,7 +145,7 @@ Common variables:
 | `SETUP_ONLY` | `1` | Only process rows marked as setup |
 | `STRATEGY_SECONDS` | `1` | Strategy loop interval |
 | `WATCH_SECONDS` | `5` | Watcher loop interval |
-| `POSITION_TIMEOUT_SECONDS` | `900` | Close positions after this many seconds; default is 15 minutes, `0` disables |
+| `POSITION_TIMEOUT_SECONDS` | `1800` | Close positions after this many seconds; default is 30 minutes, `0` disables |
 | `LEVERAGE` | `1` | Starting leverage for new paper positions |
 | `MAX_LEVERAGE` | `8` | Maximum auto-escalated leverage when paper cash is insufficient |
 | `TRADE_MODE` | `paper` | `paper` keeps local simulated orders; `live` sends Binance Futures orders |

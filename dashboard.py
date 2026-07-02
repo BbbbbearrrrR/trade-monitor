@@ -244,6 +244,11 @@ def signals_payload():
     return apply_exit_signals(signals)
 
 
+def dashboard_signals(state):
+    watchlist = state.get("watchlist") or {}
+    return [row for row in signals_payload() if row.get("symbol") in watchlist]
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(ROOT / "web"), **kwargs)
@@ -268,7 +273,7 @@ class Handler(SimpleHTTPRequestHandler):
             return self.json({
                 "state": state,
                 "history": trade_history(state["positions"]),
-                "signals": signals_payload(),
+                "signals": dashboard_signals(state),
                 "updated_at": int(__import__("time").time()),
             })
         if path == "/api/state":
