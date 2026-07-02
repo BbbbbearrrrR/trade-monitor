@@ -77,6 +77,21 @@ def current_equity(initial_equity, positions, history, fee_bps):
     return float(initial_equity) + realized_pnl(history, fee_bps) + unrealized_pnl(positions, fee_bps)
 
 
+def recently_opened_symbols(history, cooldown_seconds, now=None):
+    cooldown_seconds = int(cooldown_seconds or 0)
+    if cooldown_seconds <= 0:
+        return set()
+    now = int(time.time()) if now is None else int(now)
+    out = set()
+    for row in history or []:
+        if row.get("action") not in ("BUY", "OPEN"):
+            continue
+        opened_at = int(row.get("opened_at") or 0)
+        if opened_at and now - opened_at < cooldown_seconds:
+            out.add(row.get("symbol"))
+    return {symbol for symbol in out if symbol}
+
+
 def choose_leverage(notional, fee, available_cash, base_leverage, max_leverage):
     leverage = max(1.0, float(base_leverage))
     max_leverage = max(leverage, float(max_leverage))
@@ -160,6 +175,7 @@ def run_once(signals, args):
     positions = read_json(POSITIONS, {})
     history = read_json(watcher.HISTORY, [])
     watch = watcher.read_json(watcher.WATCHLIST, {})
+    blocked_symbols = recently_opened_symbols(history, args.reentry_cooldown_seconds)
     candidates = []
     for signal in signals:
         symbol = signal.get("symbol")
@@ -169,6 +185,14 @@ def run_once(signals, args):
                 watch = watcher.read_json(watcher.WATCHLIST, {})
             continue
         if signal.get("action") == "OPEN" and symbol not in positions:
+            if symbol in blocked_symbols:
+                print(json.dumps({
+                    "action": "SKIP",
+                    "symbol": symbol,
+                    "reason": ["reentry_cooldown"],
+                    "cooldown_seconds": int(args.reentry_cooldown_seconds),
+                }, ensure_ascii=False), file=sys.stderr)
+                continue
             candidates.append(signal)
     account_equity = current_equity(args.equity, positions, history, args.fee_bps)
     made = orders(
@@ -258,6 +282,13 @@ def demo():
     nearly_full = {str(i): {"notional": 100.1, "margin": 50.05, "entry_fee": 0.1001, "leverage": 2} for i in range(9)}
     result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1001, 10, 0.01, nearly_full)
     assert result[0]["leverage"] == 2 and result[0]["margin"] == 50.05
+    history = [
+        {"action": "BUY", "symbol": "AAA", "opened_at": 1000},
+        {"action": "CLOSE", "symbol": "BBB", "closed_at": 1100},
+        {"action": "BUY", "symbol": "CCC", "opened_at": 1},
+    ]
+    assert recently_opened_symbols(history, 3600, now=4000) == {"AAA"}
+    assert recently_opened_symbols(history, 0, now=2000) == set()
     original_mark_price = watcher.mark_price
     watcher.mark_price = lambda symbol: {"AAA": 2.2}.get(symbol)
     try:
@@ -274,6 +305,7 @@ def main():
     p.add_argument("--equity", type=float, required=False, default=10000)
     p.add_argument("--slots", type=int, default=10)
     p.add_argument("--margin-pct", type=float, default=float(os.getenv("MARGIN_PCT", "5")))
+    p.add_argument("--reentry-cooldown-seconds", type=int, default=int(os.getenv("REENTRY_COOLDOWN_SECONDS", "3600")))
     p.add_argument("--stop-buffer", type=float, default=0.01)
     p.add_argument("--fee-bps", type=float, default=float(os.getenv("FEE_BPS", "10")))
     p.add_argument("--leverage", type=float, default=float(os.getenv("LEVERAGE", "2")))

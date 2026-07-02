@@ -60,6 +60,8 @@ used cash = margin + entry fee
 
 New positions start with `LEVERAGE=2`. By default `MAX_LEVERAGE=2`, so paper sizing stays at 5% margin and 2x leverage unless you explicitly raise `MAX_LEVERAGE`.
 
+After a symbol is opened, it is blocked from opening again for `REENTRY_COOLDOWN_SECONDS` even if the previous position has already closed.
+
 ## Live Trading
 
 Default mode is always paper:
@@ -137,6 +139,7 @@ Common variables:
 | `EQUITY` | `10000` | Paper account equity used for sizing |
 | `SLOTS` | `10` | Maximum number of paper positions |
 | `MARGIN_PCT` | `5` | Margin percentage of current equity allocated to each new position |
+| `REENTRY_COOLDOWN_SECONDS` | `3600` | Block the same symbol from opening again for this many seconds after entry; `0` disables |
 | `FEE_BPS` | `10` | Fee estimate in basis points |
 | `LEVEL_KLINE` | `15m` | Strategy support/resistance candle interval |
 | `VOLUME_KLINE` | `1m` | Volume spike candle interval |
