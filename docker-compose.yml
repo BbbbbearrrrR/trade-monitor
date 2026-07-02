@@ -3,7 +3,7 @@ services:
     build: .
     command: python dashboard.py
     environment:
-      EQUITY: ${EQUITY:-1000}
+      EQUITY: ${EQUITY:-10000}
       SLOTS: ${SLOTS:-10}
       FEE_BPS: ${FEE_BPS:-10}
       BREAKOUT_BUFFER_PCT: ${BREAKOUT_BUFFER_PCT:-0.2}
@@ -25,7 +25,7 @@ services:
       - .:/app
   strategy:
     build: .
-    command: python strategy.py --watch --equity ${EQUITY:-1000} --slots ${SLOTS:-10} --fee-bps ${FEE_BPS:-10}
+    command: python strategy.py --watch --equity ${EQUITY:-10000} --slots ${SLOTS:-10} --fee-bps ${FEE_BPS:-10}
     environment:
       LEVEL_KLINE: ${LEVEL_KLINE:-15m}
       VOLUME_KLINE: ${VOLUME_KLINE:-1m}

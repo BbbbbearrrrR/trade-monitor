@@ -250,7 +250,7 @@ def demo():
 
 def main():
     p = argparse.ArgumentParser(description="Allocate one fixed equity slot to each OPEN signal.")
-    p.add_argument("--equity", type=float, required=False, default=1000)
+    p.add_argument("--equity", type=float, required=False, default=10000)
     p.add_argument("--slots", type=int, default=10)
     p.add_argument("--stop-buffer", type=float, default=0.01)
     p.add_argument("--fee-bps", type=float, default=float(os.getenv("FEE_BPS", "10")))

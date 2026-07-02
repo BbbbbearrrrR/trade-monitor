@@ -208,7 +208,7 @@ def state_payload():
     realized_pnl, realized_fees = realized_totals(read_json("trade_history.json", []), fee_bps)
     pnl = realized_pnl + unrealized_pnl
     fees = realized_fees + unrealized_fees
-    equity = float(os.getenv("EQUITY", "1000"))
+    equity = float(os.getenv("EQUITY", "10000"))
     slots = int(os.getenv("SLOTS", "10"))
     return {
         "watchlist": read_json("watchlist.json", {}),

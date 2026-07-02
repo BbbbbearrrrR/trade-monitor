@@ -48,7 +48,7 @@ current equity = EQUITY + realized PnL + unrealized PnL
 notional = current equity / slots
 ```
 
-Before any PnL, the defaults are `1000 / 10 = 100 USDT` notional per position. As paper PnL changes, new positions resize from current account equity.
+Before any PnL, the defaults are `10000 / 10 = 1000 USDT` notional per position. As paper PnL changes, new positions resize from current account equity.
 
 The strategy tracks local margin usage as:
 
@@ -133,7 +133,7 @@ Common variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `EQUITY` | `1000` | Paper account equity used for sizing |
+| `EQUITY` | `10000` | Paper account equity used for sizing |
 | `SLOTS` | `10` | Maximum number of paper positions and sizing divisor |
 | `FEE_BPS` | `10` | Fee estimate in basis points |
 | `LEVEL_KLINE` | `15m` | Strategy support/resistance candle interval |
