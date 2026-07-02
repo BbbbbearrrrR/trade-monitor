@@ -72,8 +72,11 @@ function eventFee(row){
   return row.entry_fee ?? row.fee ?? "";
 }
 
-function eventDetail(row){
-  if(Number.isFinite(Number(row.gross_pnl))) return money(row.gross_pnl);
+function eventPnl(row){
+  return Number.isFinite(Number(row.gross_pnl)) ? money(row.gross_pnl) : "";
+}
+
+function eventReason(row){
   const reason = row.reason || row.reasons || [];
   return Array.isArray(reason) ? reason.join(", ") : reason;
 }
@@ -126,7 +129,7 @@ function render(updatedAt){
   const historyHtml = history.slice(0, 50).map(row=>{
     const action = row.action === "CLOSE" ? "CLOSE" : "BUY";
     const pnl = Number(row.gross_pnl);
-    return `<tr><td>${eventTime(row)}</td><td>${row.symbol || ""}</td><td><span class="${cls(action === "BUY" ? "OPEN" : "EXIT")}">${action}</span></td><td>${price(row.price)}</td><td>${qty(row.qty)}</td><td>${usdt(row.notional)} USDT</td><td>${usdt(eventFee(row))} USDT</td><td class="${Number.isFinite(pnl) ? (pnl >= 0 ? "pos" : "neg") : ""}">${eventDetail(row)}</td></tr>`;
+    return `<tr><td>${eventTime(row)}</td><td>${row.symbol || ""}</td><td><span class="${cls(action === "BUY" ? "OPEN" : "EXIT")}">${action}</span></td><td>${price(row.price)}</td><td>${usdt(row.notional)} USDT</td><td>${usdt(eventFee(row))} USDT</td><td class="${Number.isFinite(pnl) ? (pnl >= 0 ? "pos" : "neg") : ""}">${eventPnl(row)}</td><td>${eventReason(row)}</td></tr>`;
   }).join("");
   setText("clock", clockText);
   setText("watchCount", watch.length);
