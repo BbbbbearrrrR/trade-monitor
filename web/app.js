@@ -118,7 +118,8 @@ function render(updatedAt){
   const signalsHtml = signals.map(s=>{
     const meta = state.watchlist[s.symbol] || {};
     const ch = meta.change24h ?? 0;
-    return `<tr data-symbol="${s.symbol}" class="${s.symbol===selectedSymbol?"selected":""}"><td>${s.symbol}</td><td class="${ch>=0?"pos":"neg"}">${fmt(ch)}%</td><td>${meta.score??""}</td><td>${fmt(s.support)}</td><td>${fmt(s.resistance)}</td><td>${fmt(s.qvol)}</td><td>${fmt(s.volume_ratio)}</td><td><span class="${cls(s.action)}">${s.action}</span></td></tr>`;
+    const vol15m = meta.volumeGrowth15mRatio ? `${compact(meta.volumeGrowth15mRatio, 2)}x` : "";
+    return `<tr data-symbol="${s.symbol}" class="${s.symbol===selectedSymbol?"selected":""}"><td>${s.symbol}</td><td class="${ch>=0?"pos":"neg"}">${fmt(ch)}%</td><td>${vol15m}</td><td>${fmt(s.support)}</td><td>${fmt(s.resistance)}</td><td>${fmt(s.qvol)}</td><td>${fmt(s.volume_ratio)}</td><td><span class="${cls(s.action)}">${s.action}</span></td></tr>`;
   }).join("");
   const positionsHtml = positions.map(([sym,p])=>{
     const stale = p.mark == null || p.market_status !== "TRADING";

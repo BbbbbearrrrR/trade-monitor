@@ -402,15 +402,17 @@ def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, s
         "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
         "volume_window_minutes": spike_bars * interval_minutes(volume_kline),
         "reasons": reasons,
-        "source_score": row.get("score"),
+        "source_rank": row.get("rank"),
+        "source_volume_growth_15m_pct": row.get("volumeGrowth15mPct"),
+        "source_volume_growth_15m_ratio": row.get("volumeGrowth15mRatio"),
     }
 
 
 def current_signals(args):
     watch = read_json(WATCHLIST, {})
-    rows_to_watch = sorted(watch.items(), key=lambda kv: (kv[1].get("score", 0), kv[1].get("change24h", 0)), reverse=True)
+    rows_to_watch = sorted(watch.items(), key=lambda kv: (kv[1].get("rank") or 999999, -float(kv[1].get("volumeGrowth15mRatio") or 0)))
     out = []
-    for symbol, row in rows_to_watch[:args.max_symbols]:
+    for symbol, row in rows_to_watch:
         try:
             signal_row = signal_for_row(
                 symbol,
@@ -432,7 +434,7 @@ def current_signals(args):
     return out
 
 
-def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike_minutes, setup_only=True, position_timeout_seconds=900, breakout_buffer_pct=0.2):
+def watch_once(level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, position_timeout_seconds=900, breakout_buffer_pct=0.2):
     watch = read_json(WATCHLIST, {})
     positions = read_json(POSITIONS, {})
     args = type("Args", (), {
@@ -440,7 +442,6 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike
         "volume_kline": volume_kline,
         "min_qvol": min_qvol,
         "vol_mult": vol_mult,
-        "max_symbols": max_symbols,
         "spike_minutes": spike_minutes,
         "setup_only": setup_only,
         "breakout_buffer_pct": breakout_buffer_pct,
@@ -535,7 +536,6 @@ def main():
     p.add_argument("--vol-mult", type=float, default=float(os.getenv("VOL_MULT", "2")))
     p.add_argument("--spike-minutes", type=int, default=int(os.getenv("SPIKE_MINUTES", "3")))
     p.add_argument("--breakout-buffer-pct", type=float, default=float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")))
-    p.add_argument("--max-symbols", type=int, default=int(os.getenv("MAX_SYMBOLS", "50")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
     p.add_argument("--interval", type=int, default=int(os.getenv("WATCH_SECONDS", "15")))
     p.add_argument("--position-timeout-seconds", type=int, default=int(os.getenv("POSITION_TIMEOUT_SECONDS", "900")))
@@ -551,7 +551,6 @@ def main():
             args.volume_kline,
             args.min_qvol,
             args.vol_mult,
-            args.max_symbols,
             args.spike_minutes,
             args.setup_only,
             args.position_timeout_seconds,

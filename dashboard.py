@@ -232,7 +232,6 @@ def signals_payload():
     signals = signal_snapshot()
     if signals is None:
         args = type("Args", (), {
-            "max_symbols": 50,
             "level_kline": os.getenv("LEVEL_KLINE", "15m"),
             "volume_kline": os.getenv("VOLUME_KLINE", "1m"),
             "min_qvol": float(os.getenv("MIN_QVOL", "50000")),

@@ -7,7 +7,7 @@ This project is for monitoring and paper trading by default. It reads public Bin
 ## Features
 
 - Scans Binance USDT-M perpetual futures contracts for 24h gainers.
-- Scores candidates by 24h move, liquidity, trade count, and green daily candle.
+- Ranks candidates by recent 15-minute quote-volume expansion.
 - Tracks setup candidates in `watchlist.json`.
 - Calculates support and resistance from recent candle structure.
 - Opens paper positions when price breaks resistance with a short-window quote-volume spike.
@@ -20,11 +20,9 @@ This project is for monitoring and paper trading by default. It reads public Bin
 
 Scanner defaults:
 
-- 24h change between `10%` and `30%`
-- minimum score `60`
-- top `30` perpetual futures gainers by quote volume
-
-Scanner score emphasizes 24h quote-volume growth and 24h gain quality. Quote-volume growth versus the previous 24h window contributes up to `45` points, 24h gain contributes up to `35`, 24h liquidity contributes up to `10`, and a green 24h candle adds `10`; moves above `25%` receive an extension penalty.
+- 24h change between `5%` and `30%`
+- no score filter
+- top `30` perpetual futures gainers ranked by 15-minute quote-volume expansion
 
 Signal defaults:
 
@@ -144,7 +142,6 @@ Common variables:
 | `VOL_MULT` | `2` | Recent volume multiplier versus prior average |
 | `SPIKE_MINUTES` | `3` | Recent volume window size |
 | `BREAKOUT_BUFFER_PCT` | `0.2` | Required close above resistance before treating it as a breakout |
-| `MAX_SYMBOLS` | `50` | Maximum watchlist rows to evaluate |
 | `SETUP_ONLY` | `1` | Only process rows marked as setup |
 | `STRATEGY_SECONDS` | `1` | Strategy loop interval |
 | `WATCH_SECONDS` | `5` | Watcher loop interval |
@@ -157,13 +154,12 @@ Scanner variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SCAN_THRESHOLD` | `60` | Minimum scanner score |
-| `SCAN_LIMIT` | `30` | Number of top gainers considered |
-| `MIN_CHANGE` | `10` | Minimum 24h percent change |
+| `SCAN_LIMIT` | `30` | Number of ranked gainers kept in the watchlist |
+| `MIN_CHANGE` | `5` | Minimum 24h percent change |
 | `MAX_CHANGE` | `30` | Maximum 24h percent change |
 | `MIN_DELIVERY_DAYS` | `7` | Exclude contracts whose `deliveryDate` is within this many days |
-| `SCAN_VOLUME_KLINE` | `1h` | Candle interval used to compare recent and prior quote volume |
-| `SCAN_VOLUME_HOURS` | `24` | Number of hours in each quote-volume comparison window |
+| `SCAN_VOLUME_KLINE` | `1m` | Candle interval used to compare recent and prior quote volume |
+| `SCAN_VOLUME_MINUTES` | `15` | Number of minutes in each quote-volume comparison window |
 | `SCAN_SECONDS` | `10` | Scanner refresh interval |
 
 ## Local Commands

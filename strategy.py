@@ -258,7 +258,6 @@ def main():
     p.add_argument("--max-leverage", type=float, default=float(os.getenv("MAX_LEVERAGE", "8")))
     p.add_argument("--watch", action="store_true")
     p.add_argument("--interval", type=int, default=int(os.getenv("STRATEGY_SECONDS", "5")))
-    p.add_argument("--max-symbols", type=int, default=int(os.getenv("MAX_SYMBOLS", "50")))
     p.add_argument("--level-kline", default=os.getenv("LEVEL_KLINE", "15m"))
     p.add_argument("--volume-kline", default=os.getenv("VOLUME_KLINE", os.getenv("SIGNAL_KLINE", "1m")))
     p.add_argument("--min-qvol", type=float, default=float(os.getenv("MIN_QVOL", "50000")))
