@@ -12,6 +12,7 @@ import watcher
 
 POSITIONS = Path("positions.json")
 TAKE_PROFIT_MULT = 1.02
+SHORT_TAKE_PROFIT_MULT = 0.98
 STOP_LOSS_MAX_PCT = 5
 TRADE_SIDE = "SHORT"
 
@@ -141,8 +142,8 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
                 "max_leverage": float(max_leverage),
             }, ensure_ascii=False), file=sys.stderr)
             continue
-        long_stop = capped_stop(s["price"], s.get("support"), stop_buffer, stop_loss_max_pct)
         long_take_profit = round(s["price"] * TAKE_PROFIT_MULT, 8)
+        short_take_profit = round(s["price"] * SHORT_TAKE_PROFIT_MULT, 8)
         order = {
             "action": "SELL",
             "side": TRADE_SIDE,
@@ -155,8 +156,8 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
             "fee_bps": float(fee_bps),
             "leverage": int(leverage) if leverage.is_integer() else leverage,
             "stop": long_take_profit,
-            "take_profit": long_stop,
-            "take_profit_1": long_stop,
+            "take_profit": short_take_profit,
+            "take_profit_1": short_take_profit,
             "take_profit_qty_pct": [100],
         }
         if leverage > base_leverage:
@@ -293,15 +294,15 @@ def demo():
     assert result[0]["action"] == "SELL"
     assert result[0]["side"] == "SHORT"
     assert result[0]["stop"] == 2.04
-    assert result[0]["take_profit"] == 1.9
-    assert result[0]["take_profit_1"] == 1.9
+    assert result[0]["take_profit"] == 1.96
+    assert result[0]["take_profit_1"] == 1.96
     assert result[0]["take_profit_qty_pct"] == [100]
     assert orders(candidates, 1001, 1, 0.01, {"AAA": {}}) == []
     nearly_full = {str(i): {"notional": 100.1, "margin": 50.05, "entry_fee": 0.1001, "leverage": 2} for i in range(9)}
     result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1001, 10, 0.01, nearly_full)
     assert result[0]["leverage"] == 2 and result[0]["margin"] == 50.05
     assert result[0]["stop"] == 1.02
-    assert result[0]["take_profit"] == 0.95
+    assert result[0]["take_profit"] == 0.98
     assert capped_stop(2, 1.98, 0.01, 5) == 1.9602
     history = [
         {"action": "BUY", "symbol": "AAA", "opened_at": 1000},

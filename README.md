@@ -39,7 +39,7 @@ An `OPEN` signal requires both:
 - latest volume candle close above resistance plus `BREAKOUT_BUFFER_PCT`
 - recent average quote volume greater than the higher of the minimum average quote-volume threshold or `VOL_MULT` times the prior 20-candle average quote volume
 
-The signal logic remains breakout-based, but entries are currently reversed: an `OPEN` signal opens a short position. The original long take-profit price becomes the short stop-loss price, and the original long stop-loss price becomes the short take-profit price.
+The signal logic remains breakout-based, but entries are currently reversed: an `OPEN` signal opens a short position. Short stop-loss is `entry * 1.02`, and short take-profit is `entry * 0.98`.
 
 ## Strategy Sizing
 

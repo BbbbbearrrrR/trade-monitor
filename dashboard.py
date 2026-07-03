@@ -11,6 +11,7 @@ import watcher
 
 ROOT = Path(__file__).parent
 TAKE_PROFIT_MULT = 1.02
+SHORT_TAKE_PROFIT_MULT = 0.98
 
 
 def read_json(path, default):
@@ -128,7 +129,7 @@ def enrich_positions(positions, default_fee_bps):
         side = str(p.get("side") or "LONG").upper()
         take_profit = p.get("take_profit")
         if take_profit is None and entry:
-            take_profit = round(entry * TAKE_PROFIT_MULT, 8)
+            take_profit = round(entry * (SHORT_TAKE_PROFIT_MULT if side == "SHORT" else TAKE_PROFIT_MULT), 8)
         qty = float(p.get("qty") or 0)
         fee_bps = float(p.get("fee_bps", default_fee_bps) or 0)
         entry_notional = float(p.get("notional") or (entry * qty))

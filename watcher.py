@@ -19,6 +19,7 @@ POSITIONS = Path("positions.json")
 HISTORY = Path("trade_history.json")
 SIGNALS = Path("signals.json")
 TAKE_PROFIT_MULT = 1.02
+SHORT_TAKE_PROFIT_MULT = 0.98
 STOP_LOSS_MAX_PCT = 5
 
 
@@ -196,7 +197,8 @@ def take_profit_signals(positions):
         if entry <= 0:
             continue
         side = str(position.get("side") or "LONG").upper()
-        take_profit = float(position.get("take_profit") or round(entry * TAKE_PROFIT_MULT, 8))
+        default_take_profit = round(entry * (SHORT_TAKE_PROFIT_MULT if side == "SHORT" else TAKE_PROFIT_MULT), 8)
+        take_profit = float(position.get("take_profit") or default_take_profit)
         hit = price <= take_profit if side == "SHORT" else price >= take_profit
         if hit:
             out.append({
@@ -554,7 +556,7 @@ def demo():
         globals()["mark_price"] = lambda symbol: 1.9
         capped = stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 1.2}})
         assert capped and capped[0]["reasons"] == ["stop_loss"]
-        assert take_profit_signals({"S": {"entry": 2, "side": "SHORT", "qty": 10, "take_profit": 1.9}})[0]["reasons"] == ["take_profit_2pct"]
+        assert take_profit_signals({"S": {"entry": 2, "side": "SHORT", "qty": 10, "take_profit": 1.96}})[0]["reasons"] == ["take_profit_2pct"]
         globals()["mark_price"] = lambda symbol: 2.05
         assert stop_loss_signals({"S": {"entry": 2, "side": "SHORT", "qty": 10, "stop": 2.04}})[0]["reasons"] == ["stop_loss"]
         timed_out = timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 10800, now=10901)
