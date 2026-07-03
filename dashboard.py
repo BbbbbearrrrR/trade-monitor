@@ -53,13 +53,13 @@ def trade_history(positions):
     seen_opens = {
         (row.get("symbol"), row.get("opened_at"))
         for row in history
-        if row.get("action") in ("BUY", "OPEN") and row.get("opened_at")
+        if row.get("action") in ("BUY", "SELL", "OPEN") and row.get("opened_at")
     }
     for symbol, p in positions.items():
         opened_at = p.get("opened_at")
         if opened_at and (symbol, opened_at) not in seen_opens:
             history.append({
-                "action": "BUY",
+                "action": "SELL" if str(p.get("side") or "LONG").upper() == "SHORT" else "BUY",
                 "symbol": symbol,
                 "price": p.get("entry"),
                 "qty": p.get("qty"),
@@ -87,7 +87,7 @@ def realized_totals(history, default_fee_bps):
     for row in sorted(history, key=lambda item: item.get("closed_at") or item.get("opened_at") or 0):
         symbol = row.get("symbol")
         action = row.get("action")
-        if action in ("BUY", "OPEN") and symbol:
+        if action in ("BUY", "SELL", "OPEN") and symbol:
             opens.setdefault(symbol, []).append(row)
             continue
         if action != "CLOSE":
@@ -125,7 +125,10 @@ def enrich_positions(positions, default_fee_bps):
             price = None
             mark_error = prices_error or f"{symbol} has no futures ticker price; status={market_status}"
         entry = float(p.get("entry") or 0)
-        take_profit = round(entry * TAKE_PROFIT_MULT, 8) if entry else p.get("take_profit")
+        side = str(p.get("side") or "LONG").upper()
+        take_profit = p.get("take_profit")
+        if take_profit is None and entry:
+            take_profit = round(entry * TAKE_PROFIT_MULT, 8)
         qty = float(p.get("qty") or 0)
         fee_bps = float(p.get("fee_bps", default_fee_bps) or 0)
         entry_notional = float(p.get("notional") or (entry * qty))
@@ -141,7 +144,7 @@ def enrich_positions(positions, default_fee_bps):
             mark_notional = price * qty
             exit_fee = fee_usdt(mark_notional, fee_bps)
             fee = entry_fee + exit_fee
-            gross_pnl = (price - entry) * qty
+            gross_pnl = ((entry - price) if side == "SHORT" else (price - entry)) * qty
             pnl = gross_pnl - fee
             total_pnl += pnl
         total_fee += fee
@@ -153,6 +156,7 @@ def enrich_positions(positions, default_fee_bps):
             "notional": round(entry_notional, 8),
             "margin": round(margin, 8),
             "leverage": int(leverage) if leverage.is_integer() else leverage,
+            "side": side,
             "take_profit": take_profit,
             "take_profit_1": take_profit,
             "take_profit_2": None,

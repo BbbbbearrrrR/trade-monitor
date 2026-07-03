@@ -10,7 +10,7 @@ This project is for monitoring and paper trading by default. It reads public Bin
 - Ranks candidates by recent 15-minute quote-volume expansion.
 - Tracks setup candidates in `watchlist.json`.
 - Calculates support and resistance from recent candle structure.
-- Opens paper positions when price breaks resistance with a short-window quote-volume spike.
+- Opens reversed paper positions when price breaks resistance with a short-window quote-volume spike.
 - Tracks paper positions and estimated fees/PnL in `positions.json`.
 - Records paper order history in `trade_history.json`.
 - Serves a local dashboard with watchlist signals, open positions, and candlestick levels.
@@ -22,7 +22,7 @@ Scanner defaults:
 
 - 24h change between `5%` and `30%`
 - no score filter
-- top `30` perpetual futures gainers ranked by 15-minute quote-volume expansion
+- top `50` perpetual futures gainers ranked by 15-minute quote-volume expansion
 
 Signal defaults:
 
@@ -38,6 +38,8 @@ An `OPEN` signal requires both:
 
 - latest volume candle close above resistance plus `BREAKOUT_BUFFER_PCT`
 - recent average quote volume greater than the higher of the minimum average quote-volume threshold or `VOL_MULT` times the prior 20-candle average quote volume
+
+The signal logic remains breakout-based, but entries are currently reversed: an `OPEN` signal opens a short position. The original long take-profit price becomes the short stop-loss price, and the original long stop-loss price becomes the short take-profit price.
 
 ## Strategy Sizing
 
@@ -62,7 +64,7 @@ New positions start with `LEVERAGE=2`. By default `MAX_LEVERAGE=2`, so paper siz
 
 After a symbol is opened, it is blocked from opening again for `REENTRY_COOLDOWN_SECONDS` even if the previous position has already closed.
 
-Long stop-loss prices are capped by `STOP_LOSS_MAX_PCT`. If the structure stop is more than 5% below entry by default, the strategy uses `entry * 0.95` instead.
+The original long stop-loss price is capped by `STOP_LOSS_MAX_PCT` before it is reused as the reversed short take-profit price.
 
 ## Live Trading
 
@@ -89,7 +91,7 @@ Optional live-trading guardrails:
 | `LIVE_SYMBOLS` | Comma-separated symbol allowlist, for example `BTCUSDT,ETHUSDT` |
 | `BINANCE_FUTURES_API_BASE` | API base, defaults to `https://fapi.binance.com` |
 
-Live entries use Binance USD-M Futures market `BUY` orders. Live exits use reduce-only market `SELL` orders so stop-loss, structure exits, and take-profit exits do not open a reverse short. Quantity is rounded down to Binance symbol filters before submission.
+Live reversed entries use Binance USD-M Futures market `SELL` orders. Live exits use reduce-only market `BUY` orders so stop-loss, structure exits, and take-profit exits close the short. Quantity is rounded down to Binance symbol filters before submission.
 
 Keep API keys out of git. Use keys with no withdrawal permission, add IP restrictions where possible, and start with small `MAX_LIVE_NOTIONAL` while validating behavior.
 

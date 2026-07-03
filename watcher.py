@@ -100,6 +100,7 @@ def exit_order(symbol, position, signal):
     qty = float(signal.get("qty") or position.get("qty") or 0)
     position_qty = float(position.get("qty") or 0)
     entry = float(position.get("entry") or 0)
+    side = str(position.get("side") or "LONG").upper()
     fee_bps = float(position.get("fee_bps") or 0)
     entry_fee = float(position.get("entry_fee") or 0)
     allocated_entry_fee = entry_fee * (qty / position_qty) if position_qty else entry_fee
@@ -112,7 +113,8 @@ def exit_order(symbol, position, signal):
         "qty": qty,
         "notional": notional,
         "entry": entry,
-        "gross_pnl": round((price - entry) * qty, 8),
+        "side": side,
+        "gross_pnl": round(((entry - price) if side == "SHORT" else (price - entry)) * qty, 8),
         "entry_fee": round(allocated_entry_fee, 8),
         "exit_fee": round(exit_fee, 8),
         "fee": round(allocated_entry_fee + exit_fee, 8),
@@ -140,7 +142,11 @@ def execute_partial_exit(signal, positions=None, persist=True, record_history=Tr
     live_result = None
     if binance_live.live_enabled():
         try:
-            live_result = binance_live.close_long(symbol, qty, signal.get("price"))
+            side = str(position.get("side") or "LONG").upper()
+            if side == "SHORT":
+                live_result = binance_live.close_short(symbol, qty, signal.get("price"))
+            else:
+                live_result = binance_live.close_long(symbol, qty, signal.get("price"))
         except binance_live.BinanceLiveError as exc:
             print(json.dumps({
                 "action": "SKIP",
@@ -189,8 +195,10 @@ def take_profit_signals(positions):
         entry = float(position.get("entry") or 0)
         if entry <= 0:
             continue
-        take_profit = round(entry * TAKE_PROFIT_MULT, 8)
-        if price >= take_profit:
+        side = str(position.get("side") or "LONG").upper()
+        take_profit = float(position.get("take_profit") or round(entry * TAKE_PROFIT_MULT, 8))
+        hit = price <= take_profit if side == "SHORT" else price >= take_profit
+        if hit:
             out.append({
                 "action": "EXIT",
                 "symbol": symbol,
@@ -207,6 +215,9 @@ def effective_stop(position, max_loss_pct=None):
     entry = float(position.get("entry") or 0)
     if entry <= 0:
         return float(stop) if stop else None
+    side = str(position.get("side") or "LONG").upper()
+    if side == "SHORT":
+        return float(stop) if stop else entry * TAKE_PROFIT_MULT
     max_loss_pct = float(os.getenv("STOP_LOSS_MAX_PCT", str(STOP_LOSS_MAX_PCT)) if max_loss_pct is None else max_loss_pct)
     cap = entry * (1 - max_loss_pct / 100.0)
     return max(float(stop), cap) if stop else cap
@@ -225,7 +236,9 @@ def stop_loss_signals(positions):
         qty = float(position.get("qty") or 0)
         if qty <= 0:
             continue
-        if price <= float(stop):
+        side = str(position.get("side") or "LONG").upper()
+        hit = price >= float(stop) if side == "SHORT" else price <= float(stop)
+        if hit:
             out.append({
                 "action": "EXIT",
                 "symbol": symbol,
@@ -283,7 +296,11 @@ def execute_exit(signal, watch=None, positions=None, persist=True, record_histor
     if position and binance_live.live_enabled():
         qty = float(signal.get("qty") or position.get("qty") or 0)
         try:
-            live_result = binance_live.close_long(symbol, qty, signal.get("price"))
+            side = str(position.get("side") or "LONG").upper()
+            if side == "SHORT":
+                live_result = binance_live.close_short(symbol, qty, signal.get("price"))
+            else:
+                live_result = binance_live.close_long(symbol, qty, signal.get("price"))
         except binance_live.BinanceLiveError as exc:
             print(json.dumps({
                 "action": "SKIP",
@@ -537,6 +554,9 @@ def demo():
         globals()["mark_price"] = lambda symbol: 1.9
         capped = stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 1.2}})
         assert capped and capped[0]["reasons"] == ["stop_loss"]
+        assert take_profit_signals({"S": {"entry": 2, "side": "SHORT", "qty": 10, "take_profit": 1.9}})[0]["reasons"] == ["take_profit_2pct"]
+        globals()["mark_price"] = lambda symbol: 2.05
+        assert stop_loss_signals({"S": {"entry": 2, "side": "SHORT", "qty": 10, "stop": 2.04}})[0]["reasons"] == ["stop_loss"]
         timed_out = timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 10800, now=10901)
         assert timed_out and timed_out[0]["reasons"] == ["position_timeout"]
         assert timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 10800, now=10899) == []

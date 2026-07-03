@@ -165,6 +165,21 @@ def open_long(order, client=None):
     return normalize_open_response(order, response, qty)
 
 
+def open_short(order, client=None):
+    require_live_confirmation()
+    symbol = order["symbol"]
+    if not _allowed_symbol(symbol):
+        raise BinanceLiveError(f"{symbol} not in LIVE_SYMBOLS")
+    max_notional = _max_live_notional()
+    if max_notional is not None and float(order.get("notional") or 0) > max_notional:
+        raise BinanceLiveError(f"{symbol} notional {order.get('notional')} exceeds MAX_LIVE_NOTIONAL={max_notional}")
+    client = client or BinanceFuturesClient()
+    client.change_leverage(symbol, order.get("leverage", 1))
+    qty = client.market_quantity(symbol, order["qty"], order.get("price"))
+    response = client.market_order(symbol, "SELL", qty, client_order_id=f"tm_open_{symbol}_{int(time.time())}")
+    return normalize_open_response(order, response, qty)
+
+
 def close_long(symbol, qty, price=None, client=None):
     require_live_confirmation()
     if not _allowed_symbol(symbol):
@@ -172,6 +187,16 @@ def close_long(symbol, qty, price=None, client=None):
     client = client or BinanceFuturesClient()
     live_qty = client.market_quantity(symbol, qty, price)
     response = client.market_order(symbol, "SELL", live_qty, reduce_only=True, client_order_id=f"tm_close_{symbol}_{int(time.time())}")
+    return normalize_close_response(response, live_qty)
+
+
+def close_short(symbol, qty, price=None, client=None):
+    require_live_confirmation()
+    if not _allowed_symbol(symbol):
+        raise BinanceLiveError(f"{symbol} not in LIVE_SYMBOLS")
+    client = client or BinanceFuturesClient()
+    live_qty = client.market_quantity(symbol, qty, price)
+    response = client.market_order(symbol, "BUY", live_qty, reduce_only=True, client_order_id=f"tm_close_{symbol}_{int(time.time())}")
     return normalize_close_response(response, live_qty)
 
 

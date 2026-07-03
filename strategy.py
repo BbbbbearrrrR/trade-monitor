@@ -13,6 +13,7 @@ import watcher
 POSITIONS = Path("positions.json")
 TAKE_PROFIT_MULT = 1.02
 STOP_LOSS_MAX_PCT = 5
+TRADE_SIDE = "SHORT"
 
 
 def fee_usdt(notional, fee_bps):
@@ -70,7 +71,9 @@ def unrealized_pnl(positions, default_fee_bps):
         entry_notional = float(position.get("notional") or (entry * qty))
         entry_fee = float(position.get("entry_fee") or fee_usdt(entry_notional, fee_bps))
         exit_fee = fee_usdt(mark * qty, fee_bps)
-        pnl += (mark - entry) * qty - entry_fee - exit_fee
+        side = str(position.get("side") or "LONG").upper()
+        gross = (entry - mark) * qty if side == "SHORT" else (mark - entry) * qty
+        pnl += gross - entry_fee - exit_fee
     return pnl
 
 
@@ -94,7 +97,7 @@ def recently_opened_symbols(history, cooldown_seconds, now=None):
     now = int(time.time()) if now is None else int(now)
     out = set()
     for row in history or []:
-        if row.get("action") not in ("BUY", "OPEN"):
+        if row.get("action") not in ("BUY", "SELL", "OPEN"):
             continue
         opened_at = int(row.get("opened_at") or 0)
         if opened_at and now - opened_at < cooldown_seconds:
@@ -138,8 +141,11 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
                 "max_leverage": float(max_leverage),
             }, ensure_ascii=False), file=sys.stderr)
             continue
+        long_stop = capped_stop(s["price"], s.get("support"), stop_buffer, stop_loss_max_pct)
+        long_take_profit = round(s["price"] * TAKE_PROFIT_MULT, 8)
         order = {
-            "action": "BUY",
+            "action": "SELL",
+            "side": TRADE_SIDE,
             "symbol": s["symbol"],
             "price": s["price"],
             "notional": target_notional,
@@ -148,9 +154,9 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
             "entry_fee": entry_fee,
             "fee_bps": float(fee_bps),
             "leverage": int(leverage) if leverage.is_integer() else leverage,
-            "stop": capped_stop(s["price"], s.get("support"), stop_buffer, stop_loss_max_pct),
-            "take_profit": round(s["price"] * TAKE_PROFIT_MULT, 8),
-            "take_profit_1": round(s["price"] * TAKE_PROFIT_MULT, 8),
+            "stop": long_take_profit,
+            "take_profit": long_stop,
+            "take_profit_1": long_stop,
             "take_profit_qty_pct": [100],
         }
         if leverage > base_leverage:
@@ -220,7 +226,7 @@ def run_once(signals, args):
     for order in made:
         if binance_live.live_enabled():
             try:
-                order = binance_live.open_long(order)
+                order = binance_live.open_short(order)
             except binance_live.BinanceLiveError as exc:
                 print(json.dumps({
                     "action": "SKIP",
@@ -230,14 +236,13 @@ def run_once(signals, args):
                 }, ensure_ascii=False), file=sys.stderr)
                 continue
             order["entry_fee"] = fee_usdt(order["notional"], order["fee_bps"])
-            order["take_profit"] = round(order["price"] * TAKE_PROFIT_MULT, 8)
-            order["take_profit_1"] = order["take_profit"]
         latest_positions = read_json(POSITIONS, {})
         if order["symbol"] in latest_positions:
             continue
         opened_at = int(time.time())
         position = {
             "entry": order["price"],
+            "side": order.get("side", TRADE_SIDE),
             "qty": order["qty"],
             "notional": order["notional"],
             "margin": order["margin"],
@@ -261,7 +266,7 @@ def run_once(signals, args):
         latest_positions[order["symbol"]] = position
         write_json(POSITIONS, latest_positions)
         positions = latest_positions
-        default_reason = ["live_entry"] if order.get("live") else ["paper_entry"]
+        default_reason = ["live_short_entry"] if order.get("live") else ["paper_short_entry"]
         watcher.append_history({**order, "opened_at": opened_at, "reason": order.get("reason", default_reason)})
         print(json.dumps(order, ensure_ascii=False))
     watcher.write_json(watcher.WATCHLIST, watch)
@@ -285,15 +290,18 @@ def demo():
     assert result[0]["entry_fee"] == 0.1001
     assert result[0]["fee_bps"] == 10
     assert result[0]["leverage"] == 2
-    assert result[0]["stop"] == 1.9
-    assert result[0]["take_profit"] == 2.04
-    assert result[0]["take_profit_1"] == 2.04
+    assert result[0]["action"] == "SELL"
+    assert result[0]["side"] == "SHORT"
+    assert result[0]["stop"] == 2.04
+    assert result[0]["take_profit"] == 1.9
+    assert result[0]["take_profit_1"] == 1.9
     assert result[0]["take_profit_qty_pct"] == [100]
     assert orders(candidates, 1001, 1, 0.01, {"AAA": {}}) == []
     nearly_full = {str(i): {"notional": 100.1, "margin": 50.05, "entry_fee": 0.1001, "leverage": 2} for i in range(9)}
     result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1001, 10, 0.01, nearly_full)
     assert result[0]["leverage"] == 2 and result[0]["margin"] == 50.05
-    assert result[0]["stop"] == 0.95
+    assert result[0]["stop"] == 1.02
+    assert result[0]["take_profit"] == 0.95
     assert capped_stop(2, 1.98, 0.01, 5) == 1.9602
     history = [
         {"action": "BUY", "symbol": "AAA", "opened_at": 1000},
@@ -306,8 +314,8 @@ def demo():
     watcher.mark_price = lambda symbol: {"AAA": 2.2}.get(symbol)
     try:
         history = [{"action": "CLOSE", "symbol": "ZZZ", "gross_pnl": 5, "fee": 1}]
-        positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20, "entry_fee": 0.02, "fee_bps": 10}}
-        assert round(current_equity(1000, positions, history, 10), 8) == 1005.958
+        positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20, "entry_fee": 0.02, "fee_bps": 10, "side": "SHORT"}}
+        assert round(current_equity(1000, positions, history, 10), 8) == 1001.958
     finally:
         watcher.mark_price = original_mark_price
     print("demo ok")
