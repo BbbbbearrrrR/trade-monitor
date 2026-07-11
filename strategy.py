@@ -6,9 +6,15 @@ import sys
 import time
 from pathlib import Path
 
+import binance_live
+import json_store
 import watcher
 
 POSITIONS = Path("positions.json")
+TAKE_PROFIT_MULT = 1.02
+SHORT_TAKE_PROFIT_MULT = 0.98
+STOP_LOSS_MAX_PCT = 5
+TRADE_SIDE = "SHORT"
 
 
 def fee_usdt(notional, fee_bps):
@@ -16,11 +22,7 @@ def fee_usdt(notional, fee_bps):
 
 
 def read_json(path, default):
-    return json.loads(path.read_text("utf-8")) if path.exists() else default
-
-
-def write_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
+    return json_store.read_json(path, default)
 
 
 def position_margin(position):
@@ -31,6 +33,73 @@ def position_margin(position):
 
 def used_cash(positions):
     return sum(position_margin(p) + float(p.get("entry_fee") or 0) for p in (positions or {}).values())
+
+
+def realized_pnl(history, default_fee_bps):
+    pnl = 0
+    for row in history:
+        if row.get("action") != "CLOSE":
+            continue
+        fee_bps = float(row.get("fee_bps", default_fee_bps) or 0)
+        exit_notional = float(row.get("notional") or 0)
+        exit_fee = float(row.get("exit_fee") or fee_usdt(exit_notional, fee_bps))
+        entry_fee = float(row.get("entry_fee") or 0)
+        fee = float(row.get("fee") or (entry_fee + exit_fee))
+        pnl += float(row.get("gross_pnl") or 0) - fee
+    return pnl
+
+
+def unrealized_pnl(positions, default_fee_bps):
+    pnl = 0
+    for symbol, position in (positions or {}).items():
+        try:
+            mark = watcher.mark_price(symbol)
+        except Exception as exc:
+            print(json.dumps({
+                "action": "WARN",
+                "symbol": symbol,
+                "reason": ["mark_price_unavailable"],
+                "error": str(exc),
+            }, ensure_ascii=False), file=sys.stderr)
+            continue
+        entry = float(position.get("entry") or 0)
+        qty = float(position.get("qty") or 0)
+        fee_bps = float(position.get("fee_bps", default_fee_bps) or 0)
+        entry_notional = float(position.get("notional") or (entry * qty))
+        entry_fee = float(position.get("entry_fee") or fee_usdt(entry_notional, fee_bps))
+        exit_fee = fee_usdt(mark * qty, fee_bps)
+        side = str(position.get("side") or "LONG").upper()
+        gross = (entry - mark) * qty if side == "SHORT" else (mark - entry) * qty
+        pnl += gross - entry_fee - exit_fee
+    return pnl
+
+
+def current_equity(initial_equity, positions, history, fee_bps):
+    return float(initial_equity) + realized_pnl(history, fee_bps) + unrealized_pnl(positions, fee_bps)
+
+
+def capped_stop(entry, support=None, stop_buffer=0.01, max_loss_pct=STOP_LOSS_MAX_PCT):
+    entry = float(entry)
+    max_loss_stop = entry * (1 - float(max_loss_pct) / 100.0)
+    if support:
+        structure_stop = float(support) * (1 - float(stop_buffer))
+        return round(max(structure_stop, max_loss_stop), 8)
+    return round(max_loss_stop, 8)
+
+
+def recently_opened_symbols(history, cooldown_seconds, now=None):
+    cooldown_seconds = int(cooldown_seconds or 0)
+    if cooldown_seconds <= 0:
+        return set()
+    now = int(time.time()) if now is None else int(now)
+    out = set()
+    for row in history or []:
+        if row.get("action") not in ("BUY", "SELL", "OPEN"):
+            continue
+        opened_at = int(row.get("opened_at") or 0)
+        if opened_at and now - opened_at < cooldown_seconds:
+            out.add(row.get("symbol"))
+    return {symbol for symbol in out if symbol}
 
 
 def choose_leverage(notional, fee, available_cash, base_leverage, max_leverage):
@@ -44,11 +113,13 @@ def choose_leverage(notional, fee, available_cash, base_leverage, max_leverage):
     return None, None
 
 
-def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, base_leverage=1, max_leverage=8):
+def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, base_leverage=2, max_leverage=2, margin_pct=5, stop_loss_max_pct=STOP_LOSS_MAX_PCT):
     open_slots = max(0, slots - len(positions or {}))
     if open_slots <= 0:
         return []
-    target_notional = round(equity / slots, 2)
+    base_leverage = max(1.0, float(base_leverage))
+    target_margin = round(float(equity) * float(margin_pct) / 100.0, 2)
+    target_notional = round(target_margin * base_leverage, 2)
     available_cash = equity - used_cash(positions)
     out = []
     for s in candidates:
@@ -62,12 +133,16 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
                 "symbol": s.get("symbol"),
                 "reason": ["insufficient_margin"],
                 "available_cash": round(available_cash, 8),
+                "target_margin": target_margin,
                 "target_notional": target_notional,
                 "max_leverage": float(max_leverage),
             }, ensure_ascii=False), file=sys.stderr)
             continue
+        long_take_profit = round(s["price"] * TAKE_PROFIT_MULT, 8)
+        short_take_profit = round(s["price"] * SHORT_TAKE_PROFIT_MULT, 8)
         order = {
-            "action": "BUY",
+            "action": "SELL",
+            "side": TRADE_SIDE,
             "symbol": s["symbol"],
             "price": s["price"],
             "notional": target_notional,
@@ -76,10 +151,10 @@ def orders(candidates, equity, slots, stop_buffer, positions=None, fee_bps=10, b
             "entry_fee": entry_fee,
             "fee_bps": float(fee_bps),
             "leverage": int(leverage) if leverage.is_integer() else leverage,
-            "stop": round(s["support"] * (1 - stop_buffer), 8) if s.get("support") else None,
-            "take_profit_1": round(s["price"] * 1.15, 8),
-            "take_profit_2": round(s["price"] * 1.30, 8),
-            "take_profit_qty_pct": [50, 50],
+            "stop": long_take_profit,
+            "take_profit": short_take_profit,
+            "take_profit_1": short_take_profit,
+            "take_profit_qty_pct": [100],
         }
         if leverage > base_leverage:
             order["reason"] = [f"auto_leverage_{order['leverage']}x"]
@@ -99,25 +174,67 @@ def read_signals(stdin):
 
 
 def current_signals(args):
-    return watcher.current_signals(args)
+    snapshot = read_json(watcher.SIGNALS, {})
+    if isinstance(snapshot, dict):
+        updated_at = int(snapshot.get("updated_at") or 0)
+        max_age = max(0, int(getattr(args, "signal_max_age_seconds", 0) or 0))
+        signals = snapshot.get("signals")
+        if max_age and isinstance(signals, list) and updated_at >= int(time.time()) - max_age:
+            return signals
+    return []
 
 
 def run_once(signals, args):
     positions = read_json(POSITIONS, {})
-    watch = watcher.read_json(watcher.WATCHLIST, {})
+    history = read_json(watcher.HISTORY, [])
+    blocked_symbols = recently_opened_symbols(history, args.reentry_cooldown_seconds)
     candidates = []
     for signal in signals:
         symbol = signal.get("symbol")
         if signal.get("action") == "EXIT":
-            watcher.execute_exit(signal, watch, positions, persist=False)
+            if watcher.execute_exit(signal):
+                positions = read_json(POSITIONS, {})
             continue
         if signal.get("action") == "OPEN" and symbol not in positions:
+            if symbol in blocked_symbols:
+                print(json.dumps({
+                    "action": "SKIP",
+                    "symbol": symbol,
+                    "reason": ["reentry_cooldown"],
+                    "cooldown_seconds": int(args.reentry_cooldown_seconds),
+                }, ensure_ascii=False), file=sys.stderr)
+                continue
             candidates.append(signal)
-    made = orders(candidates, args.equity, args.slots, args.stop_buffer, positions, args.fee_bps, args.leverage, args.max_leverage)
+    account_equity = current_equity(args.equity, positions, history, args.fee_bps)
+    made = orders(
+        candidates,
+        account_equity,
+        args.slots,
+        args.stop_buffer,
+        positions,
+        args.fee_bps,
+        args.leverage,
+        args.max_leverage,
+        args.margin_pct,
+        args.stop_loss_max_pct,
+    )
     for order in made:
+        if binance_live.live_enabled():
+            try:
+                order = binance_live.open_short(order)
+            except binance_live.BinanceLiveError as exc:
+                print(json.dumps({
+                    "action": "SKIP",
+                    "symbol": order.get("symbol"),
+                    "reason": ["live_order_failed"],
+                    "error": str(exc),
+                }, ensure_ascii=False), file=sys.stderr)
+                continue
+            order["entry_fee"] = fee_usdt(order["notional"], order["fee_bps"])
         opened_at = int(time.time())
-        positions[order["symbol"]] = {
+        position = {
             "entry": order["price"],
+            "side": order.get("side", TRADE_SIDE),
             "qty": order["qty"],
             "notional": order["notional"],
             "margin": order["margin"],
@@ -126,14 +243,33 @@ def run_once(signals, args):
             "leverage": order["leverage"],
             "opened_at": opened_at,
             "stop": order["stop"],
+            "take_profit": order["take_profit"],
             "take_profit_1": order["take_profit_1"],
-            "take_profit_2": order["take_profit_2"],
             "take_profit_qty_pct": order["take_profit_qty_pct"],
         }
-        watcher.append_history({**order, "opened_at": opened_at, "reason": order.get("reason", ["paper_entry"])})
+        if order.get("live"):
+            position.update({
+                "live": True,
+                "exchange": order.get("exchange"),
+                "order_id": order.get("order_id"),
+                "client_order_id": order.get("client_order_id"),
+                "status": order.get("status"),
+            })
+        inserted = {}
+
+        def add_position(latest):
+            if order["symbol"] not in latest:
+                latest[order["symbol"]] = position
+                inserted["ok"] = True
+            return latest
+
+        latest_positions = json_store.update_json(POSITIONS, {}, add_position)
+        if not inserted:
+            continue
+        positions = latest_positions
+        default_reason = ["live_short_entry"] if order.get("live") else ["paper_short_entry"]
+        watcher.append_history({**order, "opened_at": opened_at, "reason": order.get("reason", default_reason)})
         print(json.dumps(order, ensure_ascii=False))
-    write_json(POSITIONS, positions)
-    watcher.write_json(watcher.WATCHLIST, watch)
 
 
 def demo():
@@ -149,38 +285,63 @@ def demo():
     )
     assert len(result) == 2
     assert result[0]["notional"] == 100.1
-    assert result[0]["margin"] == 100.1
+    assert result[0]["margin"] == 50.05
     assert result[0]["qty"] == 50.05
     assert result[0]["entry_fee"] == 0.1001
     assert result[0]["fee_bps"] == 10
-    assert result[0]["leverage"] == 1
-    assert result[0]["stop"] == 1.782
-    assert result[0]["take_profit_1"] == 2.3
-    assert result[0]["take_profit_2"] == 2.6
+    assert result[0]["leverage"] == 2
+    assert result[0]["action"] == "SELL"
+    assert result[0]["side"] == "SHORT"
+    assert result[0]["stop"] == 2.04
+    assert result[0]["take_profit"] == 1.96
+    assert result[0]["take_profit_1"] == 1.96
+    assert result[0]["take_profit_qty_pct"] == [100]
     assert orders(candidates, 1001, 1, 0.01, {"AAA": {}}) == []
-    nearly_full = {str(i): {"notional": 100.1, "margin": 100.1, "entry_fee": 0.1001, "leverage": 1} for i in range(9)}
+    nearly_full = {str(i): {"notional": 100.1, "margin": 50.05, "entry_fee": 0.1001, "leverage": 2} for i in range(9)}
     result = orders([{"action": "OPEN", "symbol": "BBB", "price": 1, "support": 0.9}], 1001, 10, 0.01, nearly_full)
     assert result[0]["leverage"] == 2 and result[0]["margin"] == 50.05
+    assert result[0]["stop"] == 1.02
+    assert result[0]["take_profit"] == 0.98
+    assert capped_stop(2, 1.98, 0.01, 5) == 1.9602
+    history = [
+        {"action": "BUY", "symbol": "AAA", "opened_at": 1000},
+        {"action": "CLOSE", "symbol": "BBB", "closed_at": 1100},
+        {"action": "BUY", "symbol": "CCC", "opened_at": 1},
+    ]
+    assert recently_opened_symbols(history, 3600, now=4000) == {"AAA"}
+    assert recently_opened_symbols(history, 0, now=2000) == set()
+    original_mark_price = watcher.mark_price
+    watcher.mark_price = lambda symbol: {"AAA": 2.2}.get(symbol)
+    try:
+        history = [{"action": "CLOSE", "symbol": "ZZZ", "gross_pnl": 5, "fee": 1}]
+        positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20, "entry_fee": 0.02, "fee_bps": 10, "side": "SHORT"}}
+        assert round(current_equity(1000, positions, history, 10), 8) == 1001.958
+    finally:
+        watcher.mark_price = original_mark_price
     print("demo ok")
 
 
 def main():
-    p = argparse.ArgumentParser(description="Allocate one fixed equity slot to each OPEN signal.")
-    p.add_argument("--equity", type=float, required=False, default=1000)
+    p = argparse.ArgumentParser(description="Allocate a fixed margin percentage to each OPEN signal.")
+    p.add_argument("--equity", type=float, required=False, default=10000)
     p.add_argument("--slots", type=int, default=10)
+    p.add_argument("--margin-pct", type=float, default=float(os.getenv("MARGIN_PCT", "5")))
+    p.add_argument("--reentry-cooldown-seconds", type=int, default=int(os.getenv("REENTRY_COOLDOWN_SECONDS", "3600")))
     p.add_argument("--stop-buffer", type=float, default=0.01)
+    p.add_argument("--stop-loss-max-pct", type=float, default=float(os.getenv("STOP_LOSS_MAX_PCT", str(STOP_LOSS_MAX_PCT))))
     p.add_argument("--fee-bps", type=float, default=float(os.getenv("FEE_BPS", "10")))
-    p.add_argument("--leverage", type=float, default=float(os.getenv("LEVERAGE", "1")))
-    p.add_argument("--max-leverage", type=float, default=float(os.getenv("MAX_LEVERAGE", "8")))
+    p.add_argument("--leverage", type=float, default=float(os.getenv("LEVERAGE", "2")))
+    p.add_argument("--max-leverage", type=float, default=float(os.getenv("MAX_LEVERAGE", os.getenv("LEVERAGE", "2"))))
     p.add_argument("--watch", action="store_true")
     p.add_argument("--interval", type=int, default=int(os.getenv("STRATEGY_SECONDS", "5")))
-    p.add_argument("--max-symbols", type=int, default=int(os.getenv("MAX_SYMBOLS", "50")))
     p.add_argument("--level-kline", default=os.getenv("LEVEL_KLINE", "15m"))
     p.add_argument("--volume-kline", default=os.getenv("VOLUME_KLINE", os.getenv("SIGNAL_KLINE", "1m")))
     p.add_argument("--min-qvol", type=float, default=float(os.getenv("MIN_QVOL", "50000")))
     p.add_argument("--vol-mult", type=float, default=float(os.getenv("VOL_MULT", "2")))
     p.add_argument("--spike-minutes", type=int, default=int(os.getenv("SPIKE_MINUTES", "3")))
+    p.add_argument("--breakout-buffer-pct", type=float, default=float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
+    p.add_argument("--signal-max-age-seconds", type=int, default=int(os.getenv("STRATEGY_SIGNAL_MAX_AGE_SECONDS", "15")))
     p.add_argument("--demo", action="store_true")
     args = p.parse_args()
     if args.demo:

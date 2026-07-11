@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Trade Monitor</title>
-  <link rel="stylesheet" href="/style.css?v=auto-leverage" />
+  <link rel="stylesheet" href="/style.css?v=tp-10-full" />
 </head>
 <body>
   <aside>
@@ -38,7 +38,7 @@
       <div class="panel watch">
         <h2>Watchlist Signals</h2>
         <table>
-          <thead><tr><th>Symbol</th><th>24h</th><th>Score</th><th>Support</th><th>Resistance</th><th>Spike QVol</th><th>Vol x</th><th>Action</th></tr></thead>
+          <thead><tr><th>Symbol</th><th>24h</th><th>15m Vol x</th><th>Support</th><th>Resistance</th><th>Spike QVol</th><th>Vol x</th><th>Action</th></tr></thead>
           <tbody id="signals"></tbody>
         </table>
       </div>
@@ -48,14 +48,14 @@
       </div>
       <div class="panel positions-panel">
         <h2>Open Positions</h2>
-        <table><thead><tr><th>Symbol</th><th>Entry</th><th>Mark</th><th>Qty</th><th>Lev</th><th>Margin</th><th>Stop</th><th>Gross</th><th>Fee</th><th>Net PnL</th></tr></thead><tbody id="positions"></tbody></table>
+        <table><thead><tr><th>Symbol</th><th>Notional</th><th>Entry</th><th>Mark</th><th>Stop</th><th>TP</th><th>Fee</th><th>Net PnL</th></tr></thead><tbody id="positions"></tbody></table>
       </div>
       <div class="panel history">
         <h2>Trade History</h2>
-        <table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Price</th><th>Qty</th><th>Notional</th><th>Fee</th><th>PnL / Reason</th></tr></thead><tbody id="history"></tbody></table>
+        <table><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Price</th><th>Notional</th><th>Fee</th><th>PnL</th><th>Reason</th></tr></thead><tbody id="history"></tbody></table>
       </div>
     </section>
   </main>
-  <script src="/app.js?v=auto-leverage"></script>
+  <script src="/app.js?v=ranked-watchlist"></script>
 </body>
 </html>

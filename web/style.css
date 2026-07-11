@@ -6,7 +6,7 @@ nav{display:grid;gap:20px}nav b{display:block;color:#dce6ee;font-size:15px}nav s
 .sidebox{margin-top:auto;border-top:1px solid var(--line);padding-top:18px}.sidebox strong{display:block;margin-top:6px;color:var(--green)}
 main{flex:1;padding:18px;min-width:0}header{height:44px;display:flex;align-items:center;justify-content:space-between}h1{font-size:22px;margin:0}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#b9c3cc;margin:0 0 12px}
 .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin:8px 0 12px}.stats div,.panel{background:linear-gradient(180deg,var(--panel),#0a0d10);border:1px solid var(--line);border-radius:8px}
-.stats div{padding:14px}.stats strong{display:block;font-size:24px;margin-top:4px}
+.stats div{padding:14px}.stats strong{display:block;font-size:24px;margin-top:4px;min-height:35px;font-variant-numeric:tabular-nums}
 .grid{display:grid;grid-template-columns:1.1fr .9fr;gap:12px}.panel{padding:14px;min-width:0;overflow:hidden}.watch{min-height:410px}.positions-panel,.history{grid-column:1/-1}
 table{width:100%;border-collapse:collapse;table-layout:fixed}th,td{border-bottom:1px solid #202a33;padding:9px 8px;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}th{color:#8f9aa5;font-size:11px;text-transform:uppercase}td{font-variant-numeric:tabular-nums}
 tbody tr{cursor:pointer;transition:background .12s ease}

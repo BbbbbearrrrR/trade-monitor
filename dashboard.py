@@ -5,33 +5,62 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+import json_store
 import strategy
 import watcher
 
 ROOT = Path(__file__).parent
+TAKE_PROFIT_MULT = 1.02
+SHORT_TAKE_PROFIT_MULT = 0.98
 
 
 def read_json(path, default):
     path = ROOT / path
-    return json.loads(path.read_text("utf-8")) if path.exists() else default
+    return json_store.read_json(path, default)
 
 
 def fee_usdt(notional, fee_bps):
     return round(float(notional) * float(fee_bps) / 10000.0, 8)
 
 
+def mark_prices():
+    rows = watcher.get_json("/fapi/v1/ticker/price")
+    return {row["symbol"]: float(row["price"]) for row in rows if row.get("symbol") and row.get("price")}
+
+
 def trade_history(positions):
-    history = read_json("trade_history.json", [])
+    history = []
+    for row in read_json("trade_history.json", []):
+        if row.get("action") == "CLOSE":
+            reason = tuple(row.get("reason") or row.get("reasons") or [])
+            closed_at = int(row.get("closed_at") or 0)
+            duplicate = False
+            for prev in reversed(history[-20:]):
+                prev_reason = tuple(prev.get("reason") or prev.get("reasons") or [])
+                prev_closed_at = int(prev.get("closed_at") or 0)
+                if (
+                    prev.get("action") == "CLOSE"
+                    and prev.get("symbol") == row.get("symbol")
+                    and prev.get("entry") == row.get("entry")
+                    and prev.get("qty") == row.get("qty")
+                    and prev_reason == reason
+                    and abs(closed_at - prev_closed_at) <= 180
+                ):
+                    duplicate = True
+                    break
+            if duplicate:
+                continue
+        history.append(row)
     seen_opens = {
         (row.get("symbol"), row.get("opened_at"))
         for row in history
-        if row.get("action") in ("BUY", "OPEN") and row.get("opened_at")
+        if row.get("action") in ("BUY", "SELL", "OPEN") and row.get("opened_at")
     }
     for symbol, p in positions.items():
         opened_at = p.get("opened_at")
         if opened_at and (symbol, opened_at) not in seen_opens:
             history.append({
-                "action": "BUY",
+                "action": "SELL" if str(p.get("side") or "LONG").upper() == "SHORT" else "BUY",
                 "symbol": symbol,
                 "price": p.get("entry"),
                 "qty": p.get("qty"),
@@ -41,6 +70,7 @@ def trade_history(positions):
                 "fee_bps": p.get("fee_bps"),
                 "leverage": p.get("leverage"),
                 "stop": p.get("stop"),
+                "take_profit": p.get("take_profit"),
                 "take_profit_1": p.get("take_profit_1"),
                 "take_profit_2": p.get("take_profit_2"),
                 "take_profit_qty_pct": p.get("take_profit_qty_pct"),
@@ -58,7 +88,7 @@ def realized_totals(history, default_fee_bps):
     for row in sorted(history, key=lambda item: item.get("closed_at") or item.get("opened_at") or 0):
         symbol = row.get("symbol")
         action = row.get("action")
-        if action in ("BUY", "OPEN") and symbol:
+        if action in ("BUY", "SELL", "OPEN") and symbol:
             opens.setdefault(symbol, []).append(row)
             continue
         if action != "CLOSE":
@@ -82,15 +112,24 @@ def enrich_positions(positions, default_fee_bps):
     out = {}
     total_pnl = 0
     total_fee = 0
+    prices = {}
+    prices_error = None
+    try:
+        prices = mark_prices()
+    except Exception as exc:
+        prices_error = str(exc)
     for symbol, p in positions.items():
         market_status = watcher.symbol_status(symbol)
         mark_error = None
-        try:
-            price = watcher.mark_price(symbol)
-        except Exception as exc:
+        price = prices.get(symbol)
+        if price is None:
             price = None
-            mark_error = str(exc)
+            mark_error = prices_error or f"{symbol} has no futures ticker price; status={market_status}"
         entry = float(p.get("entry") or 0)
+        side = str(p.get("side") or "LONG").upper()
+        take_profit = p.get("take_profit")
+        if take_profit is None and entry:
+            take_profit = round(entry * (SHORT_TAKE_PROFIT_MULT if side == "SHORT" else TAKE_PROFIT_MULT), 8)
         qty = float(p.get("qty") or 0)
         fee_bps = float(p.get("fee_bps", default_fee_bps) or 0)
         entry_notional = float(p.get("notional") or (entry * qty))
@@ -106,7 +145,7 @@ def enrich_positions(positions, default_fee_bps):
             mark_notional = price * qty
             exit_fee = fee_usdt(mark_notional, fee_bps)
             fee = entry_fee + exit_fee
-            gross_pnl = (price - entry) * qty
+            gross_pnl = ((entry - price) if side == "SHORT" else (price - entry)) * qty
             pnl = gross_pnl - fee
             total_pnl += pnl
         total_fee += fee
@@ -118,6 +157,11 @@ def enrich_positions(positions, default_fee_bps):
             "notional": round(entry_notional, 8),
             "margin": round(margin, 8),
             "leverage": int(leverage) if leverage.is_integer() else leverage,
+            "side": side,
+            "take_profit": take_profit,
+            "take_profit_1": take_profit,
+            "take_profit_2": None,
+            "take_profit_qty_pct": [100],
             "gross_pnl": gross_pnl,
             "entry_fee": entry_fee,
             "exit_fee": exit_fee,
@@ -127,6 +171,65 @@ def enrich_positions(positions, default_fee_bps):
             "pnl_pct": ((pnl / entry_notional) * 100 if pnl is not None and entry_notional else None),
         }
     return out, total_pnl, total_fee
+
+
+def apply_exit_signals(signals):
+    return [signal for signal in signals if signal.get("action") != "EXIT"]
+
+
+def signal_snapshot():
+    snapshot = watcher.read_json(watcher.SIGNALS, None)
+    if isinstance(snapshot, dict) and isinstance(snapshot.get("signals"), list):
+        return snapshot["signals"]
+    return None
+
+
+def state_payload():
+    fee_bps = float(os.getenv("FEE_BPS", "10"))
+    raw_positions = read_json("positions.json", {})
+    positions, unrealized_pnl, unrealized_fees = enrich_positions(raw_positions, fee_bps)
+    realized_pnl, realized_fees = realized_totals(read_json("trade_history.json", []), fee_bps)
+    pnl = realized_pnl + unrealized_pnl
+    fees = realized_fees + unrealized_fees
+    equity = float(os.getenv("EQUITY", "10000"))
+    slots = int(os.getenv("SLOTS", "10"))
+    return {
+        "watchlist": read_json("watchlist.json", {}),
+        "positions": positions,
+        "account": {
+            "initial": equity,
+            "slots": slots,
+            "pnl": pnl,
+            "realized_pnl": realized_pnl,
+            "unrealized_pnl": unrealized_pnl,
+            "fees": fees,
+            "realized_fees": realized_fees,
+            "unrealized_fees": unrealized_fees,
+            "fee_bps": fee_bps,
+            "equity": equity + pnl,
+        },
+    }
+
+
+def signals_payload():
+    signals = signal_snapshot()
+    if signals is None:
+        args = type("Args", (), {
+            "level_kline": os.getenv("LEVEL_KLINE", "15m"),
+            "volume_kline": os.getenv("VOLUME_KLINE", "1m"),
+            "min_qvol": float(os.getenv("MIN_QVOL", "50000")),
+            "vol_mult": float(os.getenv("VOL_MULT", "2")),
+            "spike_minutes": int(os.getenv("SPIKE_MINUTES", "3")),
+            "breakout_buffer_pct": float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")),
+            "setup_only": os.getenv("SETUP_ONLY", "1") != "0",
+        })()
+        signals = strategy.current_signals(args)
+    return apply_exit_signals(signals)
+
+
+def dashboard_signals(state):
+    watchlist = state.get("watchlist") or {}
+    return [row for row in signals_payload() if row.get("symbol") in watchlist]
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -141,47 +244,27 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        super().end_headers()
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if path == "/api/state":
-            fee_bps = float(os.getenv("FEE_BPS", "10"))
-            raw_positions = read_json("positions.json", {})
-            positions, unrealized_pnl, unrealized_fees = enrich_positions(raw_positions, fee_bps)
-            realized_pnl, realized_fees = realized_totals(read_json("trade_history.json", []), fee_bps)
-            pnl = realized_pnl + unrealized_pnl
-            fees = realized_fees + unrealized_fees
-            equity = float(os.getenv("EQUITY", "1000"))
-            slots = int(os.getenv("SLOTS", "10"))
+        if path == "/api/dashboard":
+            state = state_payload()
             return self.json({
-                "watchlist": read_json("watchlist.json", {}),
-                "positions": positions,
-                "account": {
-                    "initial": equity,
-                    "slots": slots,
-                    "pnl": pnl,
-                    "realized_pnl": realized_pnl,
-                    "unrealized_pnl": unrealized_pnl,
-                    "fees": fees,
-                    "realized_fees": realized_fees,
-                    "unrealized_fees": unrealized_fees,
-                    "fee_bps": fee_bps,
-                    "equity": equity + pnl,
-                },
+                "state": state,
+                "history": trade_history(state["positions"]),
+                "signals": dashboard_signals(state),
+                "updated_at": int(__import__("time").time()),
             })
+        if path == "/api/state":
+            return self.json(state_payload())
         if path == "/api/history":
             return self.json(trade_history(read_json("positions.json", {})))
         if path == "/api/signals":
-            args = type("Args", (), {
-                "max_symbols": 50,
-                "level_kline": os.getenv("LEVEL_KLINE", "15m"),
-                "volume_kline": os.getenv("VOLUME_KLINE", "1m"),
-                "min_qvol": float(os.getenv("MIN_QVOL", "50000")),
-                "vol_mult": float(os.getenv("VOL_MULT", "2")),
-                "spike_minutes": int(os.getenv("SPIKE_MINUTES", "3")),
-                "setup_only": os.getenv("SETUP_ONLY", "1") != "0",
-            })()
-            return self.json(strategy.current_signals(args))
+            return self.json(signals_payload())
         if path == "/api/klines":
             query = dict(__import__("urllib.parse").parse.parse_qsl(parsed.query))
             symbol = (query.get("symbol") or "BTCUSDT").upper()

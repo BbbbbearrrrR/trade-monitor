@@ -3,11 +3,13 @@ __pycache__/
 
 *.log
 *.pid
+.*.lock
 
 watchlist.json
 positions.json
 pending.json
 trade_history.json
+signals.json
 
 charts/
 

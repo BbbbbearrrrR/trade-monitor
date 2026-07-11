@@ -2,26 +2,27 @@
 
 Binance USDT-M perpetual futures market monitor with a small dashboard, scanner, signal watcher, and paper-position allocator.
 
-This project is for monitoring and paper trading only. It reads public Binance Futures market data and writes local JSON state files. It does not place real exchange orders.
+This project is for monitoring and paper trading by default. It reads public Binance Futures market data and writes local JSON state files. Real Binance USD-M Futures orders are only sent when live trading is explicitly enabled.
 
 ## Features
 
 - Scans Binance USDT-M perpetual futures contracts for 24h gainers.
-- Scores candidates by 24h move, liquidity, trade count, and green daily candle.
+- Ranks candidates by recent 15-minute quote-volume expansion.
 - Tracks setup candidates in `watchlist.json`.
 - Calculates support and resistance from recent candle structure.
-- Opens paper positions when price breaks resistance with a short-window quote-volume spike.
+- Opens reversed paper positions when price breaks resistance with a short-window quote-volume spike.
 - Tracks paper positions and estimated fees/PnL in `positions.json`.
 - Records paper order history in `trade_history.json`.
 - Serves a local dashboard with watchlist signals, open positions, and candlestick levels.
+- Can optionally route entries/exits to Binance USD-M Futures when `TRADE_MODE=live` is explicitly enabled.
 
 ## Strategy Summary
 
 Scanner defaults:
 
-- 24h change between `10%` and `30%`
-- minimum score `70`
-- top `30` perpetual futures gainers by quote volume
+- 24h change between `5%` and `30%`
+- no score filter
+- top `50` perpetual futures gainers ranked by 15-minute quote-volume expansion
 
 Signal defaults:
 
@@ -35,18 +36,22 @@ Support and resistance are calculated from the latest 15 completed structure can
 
 An `OPEN` signal requires both:
 
-- latest volume candle close above resistance
-- recent quote volume greater than the higher of the minimum quote-volume threshold or `VOL_MULT` times the expected recent volume
+- latest volume candle close above resistance plus `BREAKOUT_BUFFER_PCT`
+- recent average quote volume greater than the higher of the minimum average quote-volume threshold or `VOL_MULT` times the prior 20-candle average quote volume
+
+The signal logic remains breakout-based, but entries are currently reversed: an `OPEN` signal opens a short position. Short stop-loss is `entry * 1.02`, and short take-profit is `entry * 0.98`.
 
 ## Strategy Sizing
 
 Each paper position targets:
 
 ```text
-notional = EQUITY / slots
+current equity = EQUITY + realized PnL + unrealized PnL
+margin = current equity * MARGIN_PCT / 100
+notional = margin * LEVERAGE
 ```
 
-With the defaults, that is `1000 / 10 = 100 USDT` notional per position.
+Before any PnL, the defaults are `10000 * 5% * 2 = 1000 USDT` notional per position with `500 USDT` margin. As paper PnL changes, new positions resize from current account equity.
 
 The strategy tracks local margin usage as:
 
@@ -55,7 +60,40 @@ margin = notional / leverage
 used cash = margin + entry fee
 ```
 
-New positions start with `LEVERAGE=1`. If available paper cash is not enough, the strategy doubles leverage step-by-step (`1x -> 2x -> 4x -> 8x`) until the required margin fits or `MAX_LEVERAGE` is reached. If even `MAX_LEVERAGE` is not enough, the signal is skipped.
+New positions start with `LEVERAGE=2`. By default `MAX_LEVERAGE=2`, so paper sizing stays at 5% margin and 2x leverage unless you explicitly raise `MAX_LEVERAGE`.
+
+After a symbol is opened, it is blocked from opening again for `REENTRY_COOLDOWN_SECONDS` even if the previous position has already closed.
+
+The original long stop-loss price is capped by `STOP_LOSS_MAX_PCT` before it is reused as the reversed short take-profit price.
+
+## Live Trading
+
+Default mode is always paper:
+
+```text
+TRADE_MODE=paper
+```
+
+Live trading requires all of the following:
+
+```text
+TRADE_MODE=live
+LIVE_TRADING_CONFIRM=YES
+BINANCE_API_KEY=...
+BINANCE_API_SECRET=...
+```
+
+Optional live-trading guardrails:
+
+| Variable | Description |
+| --- | --- |
+| `MAX_LIVE_NOTIONAL` | Reject any live entry above this USDT notional |
+| `LIVE_SYMBOLS` | Comma-separated symbol allowlist, for example `BTCUSDT,ETHUSDT` |
+| `BINANCE_FUTURES_API_BASE` | API base, defaults to `https://fapi.binance.com` |
+
+Live reversed entries use Binance USD-M Futures market `SELL` orders. Live exits use reduce-only market `BUY` orders so stop-loss, structure exits, and take-profit exits close the short. Quantity is rounded down to Binance symbol filters before submission.
+
+Keep API keys out of git. Use keys with no withdrawal permission, add IP restrictions where possible, and start with small `MAX_LIVE_NOTIONAL` while validating behavior.
 
 ## Dashboard
 
@@ -102,29 +140,38 @@ Common variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `EQUITY` | `1000` | Paper account equity used for sizing |
-| `SLOTS` | `10` | Maximum number of paper positions and sizing divisor |
+| `EQUITY` | `10000` | Paper account equity used for sizing |
+| `SLOTS` | `10` | Maximum number of paper positions |
+| `MARGIN_PCT` | `5` | Margin percentage of current equity allocated to each new position |
+| `REENTRY_COOLDOWN_SECONDS` | `3600` | Block the same symbol from opening again for this many seconds after entry; `0` disables |
 | `FEE_BPS` | `10` | Fee estimate in basis points |
 | `LEVEL_KLINE` | `15m` | Strategy support/resistance candle interval |
 | `VOLUME_KLINE` | `1m` | Volume spike candle interval |
 | `MIN_QVOL` | `50000` | 15-minute quote-volume floor used by the spike threshold |
 | `VOL_MULT` | `2` | Recent volume multiplier versus prior average |
 | `SPIKE_MINUTES` | `3` | Recent volume window size |
-| `MAX_SYMBOLS` | `50` | Maximum watchlist rows to evaluate |
+| `BREAKOUT_BUFFER_PCT` | `0.2` | Required close above resistance before treating it as a breakout |
+| `STOP_LOSS_MAX_PCT` | `5` | Maximum price loss percentage from entry before stop-loss |
 | `SETUP_ONLY` | `1` | Only process rows marked as setup |
-| `LEVERAGE` | `1` | Starting leverage for new paper positions |
-| `MAX_LEVERAGE` | `8` | Maximum auto-escalated leverage when paper cash is insufficient |
+| `STRATEGY_SECONDS` | `1` | Strategy loop interval |
+| `WATCH_SECONDS` | `5` | Watcher loop interval |
+| `POSITION_TIMEOUT_SECONDS` | `3600` | Close positions after this many seconds; default is 1 hour, `0` disables |
+| `LEVERAGE` | `2` | Leverage for new paper/live positions |
+| `MAX_LEVERAGE` | `2` | Maximum auto-escalated leverage when paper cash is insufficient |
+| `TRADE_MODE` | `paper` | `paper` keeps local simulated orders; `live` sends Binance Futures orders |
 
 Scanner variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `SCAN_THRESHOLD` | `70` | Minimum scanner score |
-| `SCAN_LIMIT` | `30` | Number of top gainers considered |
-| `MIN_CHANGE` | `10` | Minimum 24h percent change |
+| `SCAN_LIMIT` | `50` | Number of ranked gainers kept in the watchlist |
+| `MIN_CHANGE` | `5` | Minimum 24h percent change |
 | `MAX_CHANGE` | `30` | Maximum 24h percent change |
 | `MIN_DELIVERY_DAYS` | `7` | Exclude contracts whose `deliveryDate` is within this many days |
-| `SCAN_SECONDS` | `600` | Scanner refresh interval |
+| `SCAN_VOLUME_KLINE` | `1m` | Candle interval used to compare recent and prior quote volume |
+| `SCAN_VOLUME_MINUTES` | `15` | Number of minutes in each quote-volume comparison window |
+| `SCAN_MIN_VOLUME_GROWTH_RATIO` | `1.1` | Minimum recent/prior quote-volume growth ratio required for watchlist inclusion |
+| `SCAN_SECONDS` | `10` | Scanner refresh interval |
 
 ## Local Commands
 

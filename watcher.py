@@ -10,10 +10,17 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import binance_live
+import json_store
+
 API = "https://fapi.binance.com"
 WATCHLIST = Path("watchlist.json")
 POSITIONS = Path("positions.json")
 HISTORY = Path("trade_history.json")
+SIGNALS = Path("signals.json")
+TAKE_PROFIT_MULT = 1.02
+SHORT_TAKE_PROFIT_MULT = 0.98
+STOP_LOSS_MAX_PCT = 5
 
 
 def get_json(path, query=None):
@@ -33,19 +40,34 @@ def get_json(path, query=None):
 
 
 def read_json(path, default):
-    return json.loads(path.read_text("utf-8")) if path.exists() else default
+    return json_store.read_json(path, default)
 
 
 def write_json(path, value):
-    path.write_text(json.dumps(value, ensure_ascii=False, indent=2), "utf-8")
+    json_store.write_json(path, value)
 
 
 def append_history(event, path=HISTORY, limit=1000):
-    history = read_json(path, [])
-    history.append(event)
-    if len(history) > limit:
-        history = history[-limit:]
-    write_json(path, history)
+    def append(history):
+        if event.get("action") == "CLOSE":
+            reason = tuple(event.get("reason") or event.get("reasons") or [])
+            closed_at = int(event.get("closed_at") or time.time())
+            for row in reversed(history[-20:]):
+                row_reason = tuple(row.get("reason") or row.get("reasons") or [])
+                row_closed_at = int(row.get("closed_at") or 0)
+                if (
+                    row.get("action") == "CLOSE"
+                    and row.get("symbol") == event.get("symbol")
+                    and row.get("entry") == event.get("entry")
+                    and row.get("qty") == event.get("qty")
+                    and row_reason == reason
+                    and abs(closed_at - row_closed_at) <= 180
+                ):
+                    return history
+        history.append(event)
+        return history[-limit:]
+
+    json_store.update_json(path, [], append)
 
 
 def bars(symbol, interval, limit):
@@ -79,6 +101,7 @@ def exit_order(symbol, position, signal):
     qty = float(signal.get("qty") or position.get("qty") or 0)
     position_qty = float(position.get("qty") or 0)
     entry = float(position.get("entry") or 0)
+    side = str(position.get("side") or "LONG").upper()
     fee_bps = float(position.get("fee_bps") or 0)
     entry_fee = float(position.get("entry_fee") or 0)
     allocated_entry_fee = entry_fee * (qty / position_qty) if position_qty else entry_fee
@@ -91,7 +114,8 @@ def exit_order(symbol, position, signal):
         "qty": qty,
         "notional": notional,
         "entry": entry,
-        "gross_pnl": round((price - entry) * qty, 8),
+        "side": side,
+        "gross_pnl": round(((entry - price) if side == "SHORT" else (price - entry)) * qty, 8),
         "entry_fee": round(allocated_entry_fee, 8),
         "exit_fee": round(exit_fee, 8),
         "fee": round(allocated_entry_fee + exit_fee, 8),
@@ -116,7 +140,30 @@ def execute_partial_exit(signal, positions=None, persist=True, record_history=Tr
     if qty <= 0:
         return None
 
+    live_result = None
+    if binance_live.live_enabled():
+        try:
+            side = str(position.get("side") or "LONG").upper()
+            if side == "SHORT":
+                live_result = binance_live.close_short(symbol, qty, signal.get("price"))
+            else:
+                live_result = binance_live.close_long(symbol, qty, signal.get("price"))
+        except binance_live.BinanceLiveError as exc:
+            print(json.dumps({
+                "action": "SKIP",
+                "symbol": symbol,
+                "reason": ["live_close_failed"],
+                "error": str(exc),
+            }, ensure_ascii=False), file=sys.stderr)
+            return None
+        if live_result.get("avg_price"):
+            signal = {**signal, "price": live_result["avg_price"]}
+        if live_result.get("executed_qty"):
+            qty = min(float(live_result["executed_qty"]), float(position.get("qty") or 0))
+
     order = exit_order(symbol, position, {**signal, "qty": qty})
+    if live_result:
+        order.update(live_result)
     remaining_qty = round(float(position.get("qty") or 0) - qty, 8)
     if remaining_qty <= 0:
         positions.pop(symbol, None)
@@ -146,34 +193,42 @@ def take_profit_signals(positions):
         qty = float(position.get("qty") or 0)
         if qty <= 0:
             continue
-        tp1 = position.get("take_profit_1")
-        tp2 = position.get("take_profit_2")
-        hit = set(position.get("take_profit_hit") or [])
-        if tp1 and "tp1" not in hit and price >= float(tp1):
+        entry = float(position.get("entry") or 0)
+        if entry <= 0:
+            continue
+        side = str(position.get("side") or "LONG").upper()
+        default_take_profit = round(entry * (SHORT_TAKE_PROFIT_MULT if side == "SHORT" else TAKE_PROFIT_MULT), 8)
+        take_profit = float(position.get("take_profit") or default_take_profit)
+        hit = price <= take_profit if side == "SHORT" else price >= take_profit
+        if hit:
             out.append({
-                "action": "PARTIAL_EXIT",
-                "symbol": symbol,
-                "price": price,
-                "qty": round(qty * 0.5, 8),
-                "tp_key": "tp1",
-                "reasons": ["take_profit_1"],
-            })
-        elif tp2 and "tp2" not in hit and price >= float(tp2):
-            out.append({
-                "action": "PARTIAL_EXIT",
+                "action": "EXIT",
                 "symbol": symbol,
                 "price": price,
                 "qty": qty,
-                "tp_key": "tp2",
-                "reasons": ["take_profit_2"],
+                "take_profit": take_profit,
+                "reasons": ["take_profit_2pct"],
             })
     return out
+
+
+def effective_stop(position, max_loss_pct=None):
+    stop = position.get("stop")
+    entry = float(position.get("entry") or 0)
+    if entry <= 0:
+        return float(stop) if stop else None
+    side = str(position.get("side") or "LONG").upper()
+    if side == "SHORT":
+        return float(stop) if stop else entry * TAKE_PROFIT_MULT
+    max_loss_pct = float(os.getenv("STOP_LOSS_MAX_PCT", str(STOP_LOSS_MAX_PCT)) if max_loss_pct is None else max_loss_pct)
+    cap = entry * (1 - max_loss_pct / 100.0)
+    return max(float(stop), cap) if stop else cap
 
 
 def stop_loss_signals(positions):
     out = []
     for symbol, position in positions.items():
-        stop = position.get("stop")
+        stop = effective_stop(position)
         if not stop:
             continue
         try:
@@ -183,7 +238,9 @@ def stop_loss_signals(positions):
         qty = float(position.get("qty") or 0)
         if qty <= 0:
             continue
-        if price <= float(stop):
+        side = str(position.get("side") or "LONG").upper()
+        hit = price >= float(stop) if side == "SHORT" else price <= float(stop)
+        if hit:
             out.append({
                 "action": "EXIT",
                 "symbol": symbol,
@@ -194,23 +251,88 @@ def stop_loss_signals(positions):
     return out
 
 
+def timeout_signals(positions, timeout_seconds, now=None):
+    if timeout_seconds <= 0:
+        return []
+    now = int(time.time()) if now is None else int(now)
+    out = []
+    for symbol, position in positions.items():
+        opened_at = position.get("opened_at")
+        if not opened_at:
+            continue
+        qty = float(position.get("qty") or 0)
+        if qty <= 0:
+            continue
+        age_seconds = now - int(opened_at)
+        if age_seconds < timeout_seconds:
+            continue
+        try:
+            price = mark_price(symbol)
+        except Exception:
+            price = None
+        out.append({
+            "action": "EXIT",
+            "symbol": symbol,
+            "price": price,
+            "qty": qty,
+            "age_seconds": age_seconds,
+            "timeout_seconds": timeout_seconds,
+            "reasons": ["position_timeout"],
+        })
+    return out
+
+
 def execute_exit(signal, watch=None, positions=None, persist=True, record_history=True):
     symbol = signal.get("symbol")
     if not symbol:
         return None
 
-    own_watch = watch is None
     own_positions = positions is None
-    watch = read_json(WATCHLIST, {}) if own_watch else watch
     positions = read_json(POSITIONS, {}) if own_positions else positions
+    if watch is not None:
+        watch.pop(symbol, None)
+    position = positions.get(symbol)
+    live_result = None
+    if position and binance_live.live_enabled():
+        qty = float(signal.get("qty") or position.get("qty") or 0)
+        try:
+            side = str(position.get("side") or "LONG").upper()
+            if side == "SHORT":
+                live_result = binance_live.close_short(symbol, qty, signal.get("price"))
+            else:
+                live_result = binance_live.close_long(symbol, qty, signal.get("price"))
+        except binance_live.BinanceLiveError as exc:
+            print(json.dumps({
+                "action": "SKIP",
+                "symbol": symbol,
+                "reason": ["live_close_failed"],
+                "error": str(exc),
+            }, ensure_ascii=False), file=sys.stderr)
+            return None
+        if live_result.get("avg_price"):
+            signal = {**signal, "price": live_result["avg_price"]}
+        if live_result.get("executed_qty"):
+            signal = {**signal, "qty": min(float(live_result["executed_qty"]), float(position.get("qty") or 0))}
 
-    watch.pop(symbol, None)
     position = positions.pop(symbol, None)
+    if not position:
+        return None
     order = exit_order(symbol, position, signal) if position else None
+    if order and live_result:
+        order.update(live_result)
 
     if persist:
-        write_json(WATCHLIST, watch)
-        write_json(POSITIONS, positions)
+        removed = {}
+
+        def remove_position(latest):
+            current = latest.get(symbol)
+            if current and current.get("opened_at") == position.get("opened_at"):
+                removed["position"] = latest.pop(symbol)
+            return latest
+
+        json_store.update_json(POSITIONS, {}, remove_position)
+        if "position" not in removed:
+            return None
     if order and record_history:
         append_history(order)
     if order:
@@ -263,7 +385,7 @@ def interval_minutes(interval):
     raise ValueError(f"unsupported interval: {interval}")
 
 
-def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_kline):
+def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_kline, breakout_buffer_pct=0.0):
     kline_minutes = interval_minutes(volume_kline)
     spike_bars = max(1, int(round(spike_minutes / kline_minutes)))
     prev_bars = 20
@@ -274,34 +396,38 @@ def volume_spike_signal(levels, rows, min_qvol, vol_mult, spike_minutes, volume_
     recent = rows[-spike_bars:]
     prev = rows[-(prev_bars + spike_bars):-spike_bars]
     recent_qvol = sum(r["qvol"] for r in recent)
-    avg_qvol = sum(r["qvol"] for r in prev) / len(prev)
-    expected_qvol = avg_qvol * spike_bars
-    min_window_qvol = min_qvol * ((spike_bars * kline_minutes) / 15)
-    threshold = max(min_window_qvol, expected_qvol * vol_mult)
-    volume_ratio = recent_qvol / expected_qvol if expected_qvol else 0
+    recent_avg_qvol = recent_qvol / spike_bars
+    baseline_avg_qvol = sum(r["qvol"] for r in prev) / len(prev)
+    min_avg_qvol = min_qvol * (kline_minutes / 15)
+    threshold_avg_qvol = max(min_avg_qvol, baseline_avg_qvol * vol_mult)
+    volume_ratio = recent_avg_qvol / baseline_avg_qvol if baseline_avg_qvol else 0
 
     resistance = levels.get("resistance")
-    broke_resistance = bool(resistance and last["c"] > resistance)
+    breakout_price = resistance * (1 + breakout_buffer_pct / 100.0) if resistance else None
+    broke_resistance = bool(breakout_price and last["c"] > breakout_price)
+    bullish_spike = last["c"] > recent[0]["o"] and last["c"] >= last["o"]
 
     if levels.get("support") and last["c"] < levels["support"]:
         return "EXIT", ["structure_break"], volume_ratio, recent_qvol
-    if broke_resistance and recent_qvol >= threshold:
-        return "OPEN", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike"], volume_ratio, recent_qvol
+    if broke_resistance and recent_avg_qvol >= threshold_avg_qvol and bullish_spike:
+        return "OPEN", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike", "bullish_spike"], volume_ratio, recent_qvol
+    if broke_resistance and recent_avg_qvol >= threshold_avg_qvol:
+        return "SETUP", ["setup", "resistance_break", f"{spike_bars * kline_minutes}m_volume_spike", "waiting_bullish_spike"], volume_ratio, recent_qvol
     if broke_resistance:
         return "SETUP", ["setup", "resistance_break", "waiting_volume"], volume_ratio, recent_qvol
-    if recent_qvol >= threshold:
+    if recent_avg_qvol >= threshold_avg_qvol:
         return "SETUP", ["setup", f"{spike_bars * kline_minutes}m_volume_spike", "waiting_breakout"], volume_ratio, recent_qvol
     return "SETUP", ["setup", "waiting_breakout", "waiting_volume"], volume_ratio, recent_qvol
 
 
-def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True):
+def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, breakout_buffer_pct=0.2):
     if setup_only and not is_setup(row):
         return None
     level_rows = bars(symbol, level_kline, 16)
     spike_bars = max(1, int(round(spike_minutes / interval_minutes(volume_kline))))
     volume_rows = bars(symbol, volume_kline, 20 + spike_bars)
     levels = structure(level_rows[:-1])
-    action, reasons, volume_ratio, recent_qvol = volume_spike_signal(levels, volume_rows, min_qvol, vol_mult, spike_minutes, volume_kline)
+    action, reasons, volume_ratio, recent_qvol = volume_spike_signal(levels, volume_rows, min_qvol, vol_mult, spike_minutes, volume_kline, breakout_buffer_pct)
     last = volume_rows[-1]
     breakout_pct = (last["c"] / levels["resistance"] - 1) * 100 if levels["resistance"] else 0
     return {
@@ -311,19 +437,23 @@ def signal_for_row(symbol, row, level_kline, volume_kline, min_qvol, vol_mult, s
         "support": levels["support"],
         "resistance": levels["resistance"],
         "breakout_pct": round(breakout_pct, 2),
+        "breakout_buffer_pct": breakout_buffer_pct,
         "qvol": round(recent_qvol) if recent_qvol is not None else None,
         "volume_ratio": round(volume_ratio, 2) if volume_ratio is not None else None,
         "volume_window_minutes": spike_bars * interval_minutes(volume_kline),
         "reasons": reasons,
-        "source_score": row.get("score"),
+        "source_rank": row.get("rank"),
+        "source_change24h": row.get("change24h"),
+        "source_volume_growth_15m_pct": row.get("volumeGrowth15mPct"),
+        "source_volume_growth_15m_ratio": row.get("volumeGrowth15mRatio"),
     }
 
 
 def current_signals(args):
     watch = read_json(WATCHLIST, {})
-    rows_to_watch = sorted(watch.items(), key=lambda kv: (kv[1].get("score", 0), kv[1].get("change24h", 0)), reverse=True)
+    rows_to_watch = sorted(watch.items(), key=lambda kv: (kv[1].get("rank") or 999999, -float(kv[1].get("volumeGrowth15mRatio") or 0)))
     out = []
-    for symbol, row in rows_to_watch[:args.max_symbols]:
+    for symbol, row in rows_to_watch:
         try:
             signal_row = signal_for_row(
                 symbol,
@@ -334,6 +464,7 @@ def current_signals(args):
                 args.vol_mult,
                 args.spike_minutes,
                 args.setup_only,
+                getattr(args, "breakout_buffer_pct", 0.2),
             )
         except (OSError, urllib.error.URLError) as e:
             print(f"skip {symbol}: {e}", file=sys.stderr)
@@ -344,7 +475,7 @@ def current_signals(args):
     return out
 
 
-def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike_minutes, setup_only=True):
+def watch_once(level_kline, volume_kline, min_qvol, vol_mult, spike_minutes, setup_only=True, position_timeout_seconds=3600, breakout_buffer_pct=0.2):
     watch = read_json(WATCHLIST, {})
     positions = read_json(POSITIONS, {})
     args = type("Args", (), {
@@ -352,34 +483,43 @@ def watch_once(level_kline, volume_kline, min_qvol, vol_mult, max_symbols, spike
         "volume_kline": volume_kline,
         "min_qvol": min_qvol,
         "vol_mult": vol_mult,
-        "max_symbols": max_symbols,
         "spike_minutes": spike_minutes,
         "setup_only": setup_only,
+        "breakout_buffer_pct": breakout_buffer_pct,
     })()
     changed = False
     for stop_signal in stop_loss_signals(positions):
         print(json.dumps(stop_signal, ensure_ascii=False))
-        execute_exit(stop_signal, watch, positions, persist=False)
+        if execute_exit(stop_signal):
+            positions = read_json(POSITIONS, {})
+        changed = True
+    for timeout_signal in timeout_signals(positions, position_timeout_seconds):
+        if timeout_signal["symbol"] not in positions:
+            continue
+        print(json.dumps(timeout_signal, ensure_ascii=False))
+        if execute_exit(timeout_signal):
+            positions = read_json(POSITIONS, {})
         changed = True
     for tp_signal in take_profit_signals(positions):
         if tp_signal["symbol"] not in positions:
             continue
         print(json.dumps(tp_signal, ensure_ascii=False))
-        position = positions.get(tp_signal["symbol"])
-        if position:
-            hit = set(position.get("take_profit_hit") or [])
-            hit.add(tp_signal["tp_key"])
-            position["take_profit_hit"] = sorted(hit)
-        execute_partial_exit(tp_signal, positions, persist=False)
+        if execute_exit(tp_signal):
+            positions = read_json(POSITIONS, {})
         changed = True
+    visible_signals = []
     for out in current_signals(args):
         print(json.dumps(out, ensure_ascii=False))
         if out["action"] == "EXIT":
-            execute_exit(out, watch, positions, persist=False)
+            if execute_exit(out):
+                positions = read_json(POSITIONS, {})
             changed = True
-    if changed:
-        write_json(WATCHLIST, watch)
-        write_json(POSITIONS, positions)
+        else:
+            visible_signals.append(out)
+    write_json(SIGNALS, {
+        "updated_at": int(time.time()),
+        "signals": visible_signals,
+    })
 
 
 def demo():
@@ -393,8 +533,14 @@ def demo():
 
     rows1m = [{"t": i, "o": 1.36, "h": 1.38, "l": 1.35, "c": 1.36, "vol": 1, "qvol": 1000, "trades": 10} for i in range(20)]
     rows1m += [{"t": 21 + i, "o": 1.36, "h": 1.45, "l": 1.35, "c": 1.43, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
-    action, reasons, ratio, recent_qvol = volume_spike_signal(structure(rows15), rows1m, 1000, 3, 3, "1m")
-    assert action == "OPEN" and "resistance_break" in reasons and "3m_volume_spike" in reasons and ratio == 3.5 and recent_qvol == 10500
+    action, reasons, ratio, recent_qvol = volume_spike_signal(structure(rows15), rows1m, 1000, 3, 3, "1m", 0.2)
+    assert action == "OPEN" and "resistance_break" in reasons and "3m_volume_spike" in reasons and "bullish_spike" in reasons and ratio == 3.5 and recent_qvol == 10500
+    bearish_spike_rows = rows1m[:-3] + [{"t": 21 + i, "o": 1.48, "h": 1.5, "l": 1.42, "c": 1.43, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
+    action, reasons, _, _ = volume_spike_signal(structure(rows15), bearish_spike_rows, 1000, 3, 3, "1m", 0.2)
+    assert action == "SETUP" and "waiting_bullish_spike" in reasons
+    touch_rows = rows1m[:-3] + [{"t": 21 + i, "o": 1.36, "h": 1.43, "l": 1.35, "c": 1.421, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
+    action, reasons, _, _ = volume_spike_signal(structure(rows15), touch_rows, 1000, 3, 3, "1m", 0.2)
+    assert action == "SETUP" and "waiting_breakout" in reasons
     no_break_rows = rows1m[:-3] + [{"t": 21 + i, "o": 1.36, "h": 1.39, "l": 1.35, "c": 1.38, "vol": 1, "qvol": 3500, "trades": 50} for i in range(3)]
     action, reasons, _, _ = volume_spike_signal(structure(rows15), no_break_rows, 1000, 3, 3, "1m")
     assert action == "SETUP" and "waiting_breakout" in reasons
@@ -412,7 +558,22 @@ def demo():
     positions = {"AAA": {"entry": 2, "qty": 10, "notional": 20, "entry_fee": 0.2, "fee_bps": 10, "leverage": 1}}
     order = execute_partial_exit({"symbol": "AAA", "price": 2.3, "qty": 5, "reasons": ["take_profit_1"]}, positions, persist=False, record_history=False)
     assert order["entry_fee"] == 0.1 and positions["AAA"]["entry_fee"] == 0.1
-    assert stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 2.1}}) == []
+    original_mark_price = mark_price
+    globals()["mark_price"] = lambda symbol: 2.11
+    try:
+        assert stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 2.1}}) == []
+        globals()["mark_price"] = lambda symbol: 1.9
+        capped = stop_loss_signals({"AAA": {"entry": 2, "qty": 10, "stop": 1.2}})
+        assert capped and capped[0]["reasons"] == ["stop_loss"]
+        assert take_profit_signals({"S": {"entry": 2, "side": "SHORT", "qty": 10, "take_profit": 1.96}})[0]["reasons"] == ["take_profit_2pct"]
+        globals()["mark_price"] = lambda symbol: 2.05
+        assert stop_loss_signals({"S": {"entry": 2, "side": "SHORT", "qty": 10, "stop": 2.04}})[0]["reasons"] == ["stop_loss"]
+        timed_out = timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 10800, now=10901)
+        assert timed_out and timed_out[0]["reasons"] == ["position_timeout"]
+        assert timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 10800, now=10899) == []
+        assert timeout_signals({"AAA": {"opened_at": 100, "qty": 10}}, 0, now=20000) == []
+    finally:
+        globals()["mark_price"] = original_mark_price
     print("demo ok")
 
 def main():
@@ -422,9 +583,10 @@ def main():
     p.add_argument("--min-qvol", type=float, default=float(os.getenv("MIN_QVOL", "50000")))
     p.add_argument("--vol-mult", type=float, default=float(os.getenv("VOL_MULT", "2")))
     p.add_argument("--spike-minutes", type=int, default=int(os.getenv("SPIKE_MINUTES", "3")))
-    p.add_argument("--max-symbols", type=int, default=int(os.getenv("MAX_SYMBOLS", "50")))
+    p.add_argument("--breakout-buffer-pct", type=float, default=float(os.getenv("BREAKOUT_BUFFER_PCT", "0.2")))
     p.add_argument("--setup-only", action=argparse.BooleanOptionalAction, default=os.getenv("SETUP_ONLY", "1") != "0")
     p.add_argument("--interval", type=int, default=int(os.getenv("WATCH_SECONDS", "15")))
+    p.add_argument("--position-timeout-seconds", type=int, default=int(os.getenv("POSITION_TIMEOUT_SECONDS", "3600")))
     p.add_argument("--once", action="store_true")
     p.add_argument("--demo", action="store_true")
     args = p.parse_args()
@@ -432,7 +594,16 @@ def main():
         demo()
         return
     while True:
-        watch_once(args.level_kline, args.volume_kline, args.min_qvol, args.vol_mult, args.max_symbols, args.spike_minutes, args.setup_only)
+        watch_once(
+            args.level_kline,
+            args.volume_kline,
+            args.min_qvol,
+            args.vol_mult,
+            args.spike_minutes,
+            args.setup_only,
+            args.position_timeout_seconds,
+            args.breakout_buffer_pct,
+        )
         if args.once:
             return
         time.sleep(args.interval)
