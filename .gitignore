@@ -3,6 +3,7 @@ __pycache__/
 
 *.log
 *.pid
+.*.lock
 
 watchlist.json
 positions.json

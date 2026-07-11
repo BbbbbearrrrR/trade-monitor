@@ -174,30 +174,7 @@ def enrich_positions(positions, default_fee_bps):
 
 
 def apply_exit_signals(signals):
-    watch = watcher.read_json(watcher.WATCHLIST, {})
-    positions = watcher.read_json(watcher.POSITIONS, {})
-    visible = []
-    changed = False
-    for signal in signals:
-        if signal.get("action") != "EXIT":
-            visible.append(signal)
-            continue
-        symbol = signal.get("symbol")
-        if not symbol:
-            continue
-        if symbol in positions:
-            order = watcher.execute_exit(signal, watch, positions, persist=False)
-            if order:
-                changed = True
-            else:
-                visible.append(signal)
-        elif symbol in watch:
-            watch.pop(symbol, None)
-            changed = True
-    if changed:
-        watcher.write_json(watcher.WATCHLIST, watch)
-        watcher.write_json(watcher.POSITIONS, positions)
-    return visible
+    return [signal for signal in signals if signal.get("action") != "EXIT"]
 
 
 def signal_snapshot():

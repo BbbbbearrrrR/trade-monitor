@@ -25,10 +25,6 @@ def read_json(path, default):
     return json_store.read_json(path, default)
 
 
-def write_json(path, value):
-    json_store.write_json(path, value)
-
-
 def position_margin(position):
     notional = float(position.get("notional") or (float(position.get("entry") or 0) * float(position.get("qty") or 0)))
     leverage = max(1.0, float(position.get("leverage") or 1))
@@ -185,13 +181,12 @@ def current_signals(args):
         signals = snapshot.get("signals")
         if max_age and isinstance(signals, list) and updated_at >= int(time.time()) - max_age:
             return signals
-    return watcher.current_signals(args)
+    return []
 
 
 def run_once(signals, args):
     positions = read_json(POSITIONS, {})
     history = read_json(watcher.HISTORY, [])
-    watch = watcher.read_json(watcher.WATCHLIST, {})
     blocked_symbols = recently_opened_symbols(history, args.reentry_cooldown_seconds)
     candidates = []
     for signal in signals:
@@ -199,7 +194,6 @@ def run_once(signals, args):
         if signal.get("action") == "EXIT":
             if watcher.execute_exit(signal):
                 positions = read_json(POSITIONS, {})
-                watch = watcher.read_json(watcher.WATCHLIST, {})
             continue
         if signal.get("action") == "OPEN" and symbol not in positions:
             if symbol in blocked_symbols:
@@ -237,9 +231,6 @@ def run_once(signals, args):
                 }, ensure_ascii=False), file=sys.stderr)
                 continue
             order["entry_fee"] = fee_usdt(order["notional"], order["fee_bps"])
-        latest_positions = read_json(POSITIONS, {})
-        if order["symbol"] in latest_positions:
-            continue
         opened_at = int(time.time())
         position = {
             "entry": order["price"],
@@ -264,13 +255,21 @@ def run_once(signals, args):
                 "client_order_id": order.get("client_order_id"),
                 "status": order.get("status"),
             })
-        latest_positions[order["symbol"]] = position
-        write_json(POSITIONS, latest_positions)
+        inserted = {}
+
+        def add_position(latest):
+            if order["symbol"] not in latest:
+                latest[order["symbol"]] = position
+                inserted["ok"] = True
+            return latest
+
+        latest_positions = json_store.update_json(POSITIONS, {}, add_position)
+        if not inserted:
+            continue
         positions = latest_positions
         default_reason = ["live_short_entry"] if order.get("live") else ["paper_short_entry"]
         watcher.append_history({**order, "opened_at": opened_at, "reason": order.get("reason", default_reason)})
         print(json.dumps(order, ensure_ascii=False))
-    watcher.write_json(watcher.WATCHLIST, watch)
 
 
 def demo():

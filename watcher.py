@@ -48,26 +48,26 @@ def write_json(path, value):
 
 
 def append_history(event, path=HISTORY, limit=1000):
-    history = read_json(path, [])
-    if event.get("action") == "CLOSE":
-        reason = tuple(event.get("reason") or event.get("reasons") or [])
-        closed_at = int(event.get("closed_at") or time.time())
-        for row in reversed(history[-20:]):
-            row_reason = tuple(row.get("reason") or row.get("reasons") or [])
-            row_closed_at = int(row.get("closed_at") or 0)
-            if (
-                row.get("action") == "CLOSE"
-                and row.get("symbol") == event.get("symbol")
-                and row.get("entry") == event.get("entry")
-                and row.get("qty") == event.get("qty")
-                and row_reason == reason
-                and abs(closed_at - row_closed_at) <= 180
-            ):
-                return
-    history.append(event)
-    if len(history) > limit:
-        history = history[-limit:]
-    write_json(path, history)
+    def append(history):
+        if event.get("action") == "CLOSE":
+            reason = tuple(event.get("reason") or event.get("reasons") or [])
+            closed_at = int(event.get("closed_at") or time.time())
+            for row in reversed(history[-20:]):
+                row_reason = tuple(row.get("reason") or row.get("reasons") or [])
+                row_closed_at = int(row.get("closed_at") or 0)
+                if (
+                    row.get("action") == "CLOSE"
+                    and row.get("symbol") == event.get("symbol")
+                    and row.get("entry") == event.get("entry")
+                    and row.get("qty") == event.get("qty")
+                    and row_reason == reason
+                    and abs(closed_at - row_closed_at) <= 180
+                ):
+                    return history
+        history.append(event)
+        return history[-limit:]
+
+    json_store.update_json(path, [], append)
 
 
 def bars(symbol, interval, limit):
@@ -287,12 +287,10 @@ def execute_exit(signal, watch=None, positions=None, persist=True, record_histor
     if not symbol:
         return None
 
-    own_watch = watch is None
     own_positions = positions is None
-    watch = read_json(WATCHLIST, {}) if own_watch else watch
     positions = read_json(POSITIONS, {}) if own_positions else positions
-
-    watch.pop(symbol, None)
+    if watch is not None:
+        watch.pop(symbol, None)
     position = positions.get(symbol)
     live_result = None
     if position and binance_live.live_enabled():
@@ -317,13 +315,24 @@ def execute_exit(signal, watch=None, positions=None, persist=True, record_histor
             signal = {**signal, "qty": min(float(live_result["executed_qty"]), float(position.get("qty") or 0))}
 
     position = positions.pop(symbol, None)
+    if not position:
+        return None
     order = exit_order(symbol, position, signal) if position else None
     if order and live_result:
         order.update(live_result)
 
     if persist:
-        write_json(WATCHLIST, watch)
-        write_json(POSITIONS, positions)
+        removed = {}
+
+        def remove_position(latest):
+            current = latest.get(symbol)
+            if current and current.get("opened_at") == position.get("opened_at"):
+                removed["position"] = latest.pop(symbol)
+            return latest
+
+        json_store.update_json(POSITIONS, {}, remove_position)
+        if "position" not in removed:
+            return None
     if order and record_history:
         append_history(order)
     if order:
